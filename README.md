@@ -6,6 +6,8 @@ This README provides a clean, working quickstart and detailed information about 
 
 ---
 
+[![Watch the demo](assets/demo-thumbnail.png)](assets/demo.mp4)
+
 ## Runtime Dependencies
 
 The runtime dependencies for the OKE MCP Server are pinned or floored to versions known to work locally. These are specified in the `requirements.txt` file, which should be placed in the root of your repository.
