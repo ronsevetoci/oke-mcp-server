@@ -6,7 +6,9 @@ This README provides a clean, working quickstart and detailed information about 
 
 ---
 
-<video src="assets/demo.mp4" autoplay loop muted playsinline controls width="800"></video>
+<video autoplay loop muted playsinline controls width="800">
+  <source src="https://raw.githubusercontent.com/ronsevetoci/oke-mcp-server/main/assets/demo.mp4" type="video/mp4">
+</video>
 
 ## Runtime Dependencies
 
