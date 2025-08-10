@@ -4,6 +4,9 @@ import argparse
 import os
 import sys
 import logging
+# Minimal metadata import for versioning
+from importlib.metadata import version, PackageNotFoundError
+import signal
 
 # Configure logging level via env var, default INFO
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -13,6 +16,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("oke-mcp-server")
 
+# Server name and version metadata
+SERVER_NAME = "OKE MCP Server"
+try:
+    __version__ = version("oke-mcp-server")
+except PackageNotFoundError:
+    __version__ = "0.0.0-local"
+
 # Ensure stdio flushes promptly in uvx/GUI contexts
 try:
     sys.stdout.reconfigure(line_buffering=True)  # Python 3.7+
@@ -21,6 +31,7 @@ except Exception:
 from mcp.server.fastmcp import FastMCP
 
 from config_store import get_defaults, set_defaults, get_effective_defaults
+from oci_auth import invalidate_auth_cache
 from handlers.oke import (
     list_clusters as _list_clusters,
     get_cluster as _get_cluster,
@@ -42,7 +53,7 @@ from handlers.oke import (
     restart_deployment as _restart_deployment,
 )
 
-mcp = FastMCP("OKE MCP Server")
+mcp = FastMCP(SERVER_NAME)
 
 # ---- Configuration tools ----
 
@@ -57,6 +68,29 @@ def meta_echo(payload: Optional[Dict] = None) -> Dict:
     """Echo back payload for client troubleshooting."""
     logger.debug("meta_echo payload=%s", payload)
     return {"received": payload or {}}
+
+@mcp.tool()
+def meta_env() -> Dict:
+    """Return a redacted snapshot of relevant env vars (local diagnostic)."""
+    keys = [
+        "OKE_COMPARTMENT_ID", "OKE_CLUSTER_ID", "OCI_CLI_AUTH",
+        "OCI_CLI_PROFILE", "OCI_CONFIG_FILE", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+        "LOG_LEVEL"
+    ]
+    def redact(v: Optional[str]) -> Optional[str]:
+        if not v:
+            return v
+        if len(v) <= 8:
+            return "***"
+        return v[:4] + "…" + v[-4:]
+    return {k: redact(os.getenv(k)) for k in keys}
+
+@mcp.tool()
+def auth_refresh() -> Dict:
+    """Force refresh of cached OCI signer (useful after STS token rotation)."""
+    invalidate_auth_cache()
+    return {"status": "refreshed"}
+
 @mcp.tool()
 def config_set_defaults(compartment_id: Optional[str] = None, cluster_id: Optional[str] = None) -> Dict:
     """Set default compartment/cluster OCIDs for subsequent calls."""
@@ -257,7 +291,8 @@ def oke_restart_deployment(namespace: str, name: str, reason: Optional[str] = No
 def health() -> Dict:
     """Quick status including stored and effective defaults."""
     return {
-        "server": "OKE MCP Server",
+        "server": SERVER_NAME,
+        "version": __version__,
         "defaults": get_defaults(),
         "effective": get_effective_defaults(),
     }
@@ -271,8 +306,47 @@ def main() -> None:
         choices=["stdio"],  # extend when adding other transports
         help="MCP transport to use (default: stdio)",
     )
+    parser.add_argument(
+        "--set-defaults-compartment",
+        dest="defaults_compartment",
+        help="Set default compartment OCID for this session (no need to call config_set_defaults).",
+    )
+    parser.add_argument(
+        "--set-defaults-cluster",
+        dest="defaults_cluster",
+        help="Set default cluster OCID for this session (no need to call config_set_defaults).",
+    )
+    parser.add_argument(
+        "--print-tools",
+        action="store_true",
+        help="List registered tools and exit (local sanity check).",
+    )
     args = parser.parse_args()
-    logger.info("Starting OKE MCP Server (transport=%s, log_level=%s)", args.transport, LOG_LEVEL)
+    logger.info("Starting %s v%s (transport=%s, log_level=%s)", SERVER_NAME, __version__, args.transport, LOG_LEVEL)
+
+    if args.defaults_compartment or args.defaults_cluster:
+        set_defaults(compartment_id=args.defaults_compartment, cluster_id=args.defaults_cluster)
+        logger.info("Session defaults set: compartment=%s cluster=%s", args.defaults_compartment, args.defaults_cluster)
+
+    if args.print_tools:
+        tool_names = sorted(getattr(mcp, "_tools", {}).keys())
+        for name in tool_names:
+            print(name)
+        return
+
+    def _graceful_exit(signum, frame):
+        logger.info("Received signal %s, shutting down %s v%s", signum, SERVER_NAME, __version__)
+        sys.exit(0)
+    signal.signal(signal.SIGINT, _graceful_exit)
+    signal.signal(signal.SIGTERM, _graceful_exit)
+
+    if logger.isEnabledFor(logging.DEBUG):
+        try:
+            # FastMCP stores tools in mcp._tools (dict name->callable); this is a best-effort introspection for local debugging
+            tool_names = sorted(getattr(mcp, "_tools", {}).keys())
+            logger.debug("Registered tools (%d): %s", len(tool_names), ", ".join(tool_names))
+        except Exception:
+            pass
     mcp.run(transport=args.transport)
 
 
