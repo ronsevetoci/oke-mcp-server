@@ -1,23 +1,3 @@
-VENV := venv
-PYTHON := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
-
-install:
-	python3 -m venv $(VENV)
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
-
-run:
-	MCP_LOG_LEVEL=DEBUG $(PYTHON) main.py
-
-run-stdio:
-	MCP_LOG_LEVEL=DEBUG mcp run -t stdio main.py
-
-test:
-	$(PYTHON) -m pytest tests
-
-clean:
-	rm -rf $(VENV) __pycache__ .pytest_cache
 # OKE MCP Server — Unified Makefile
 # Usage:
 #   make install        # create venv (if missing) & install deps
@@ -29,37 +9,46 @@ clean:
 #   make help           # list targets
 
 SHELL := /bin/bash
-VENV ?= venv
+.SHELLFLAGS := -eu -o pipefail -c
+VENV ?= .venv
 PYTHON := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
+PIP := $(PYTHON) -m pip
 
-.PHONY: help install run run-stdio test clean dev-inspect
+.PHONY: help install install-dev run dev run-stdio test clean dev-inspect format lint typecheck
 
 help:
 	@echo "Targets:"
 	@echo "  install       Create venv & install dependencies"
+	@echo "  install-dev   Install runtime + dev dependencies"
 	@echo "  run           Run MCP server directly (stdio)"
+	@echo "  dev           Run MCP server directly (stdio)"
 	@echo "  run-stdio     Run via MCP CLI stdio transport (recommended)"
 	@echo "  test          Run pytest (if tests folder exists)"
 	@echo "  clean         Remove venv and caches"
 	@echo "  dev-inspect   Open MCP Inspector connected to this server (dev only)"
+	@echo "  format        Run Black + Ruff (fix)"
+	@echo "  lint          Run Ruff checks"
+	@echo "  typecheck     Run mypy type checks"
 
 install:
 	@if [ ! -d "$(VENV)" ]; then \
 		python3 -m venv $(VENV); \
-		$(PIP) install --upgrade pip; \
 	fi
+	$(PIP) install --upgrade pip
 	$(PIP) install -r requirements.txt
 
-# Run the MCP server directly (reads JSON-RPC from stdin)
+install-dev: install
+	$(PIP) install -r requirements-dev.txt || true
+
 run: install
 	MCP_LOG_LEVEL=DEBUG $(PYTHON) main.py
 
-# Preferred for manual testing: leverage the MCP CLI stdio transport
-run-stdio: install
-	MCP_LOG_LEVEL=DEBUG mcp run -t stdio $(PYTHON) main.py
+dev: install
+	MCP_LOG_LEVEL=DEBUG $(PYTHON) main.py
 
-# Run tests (no-op if tests/ missing)
+run-stdio: install
+	MCP_LOG_LEVEL=DEBUG mcp run -t stdio main.py
+
 test: install
 	@if [ -d tests ]; then \
 		$(PYTHON) -m pytest -q; \
@@ -67,8 +56,18 @@ test: install
 		echo "(skipped) no tests directory"; \
 	fi
 
+format: install
+	$(PYTHON) -m black .
+	$(PYTHON) -m ruff check --fix .
+
+lint: install
+	$(PYTHON) -m ruff check .
+
+typecheck: install
+	$(PYTHON) -m mypy --ignore-missing-imports .
+
 clean:
-	rm -rf $(VENV) __pycache__ .pytest_cache **/__pycache__
+	rm -rf $(VENV) __pycache__ .pytest_cache **/__pycache__ .ruff_cache .mypy_cache
 
 # --- Dev-only helpers ---
 # If you prefer uv, override: make dev-inspect INSPECTOR_CMD='uvx mcp dev ./main.py'
