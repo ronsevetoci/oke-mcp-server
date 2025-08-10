@@ -1,0 +1,54 @@
+# Runtime dependencies for the OKE MCP Server
+# Pin or floor versions known to work locally. Update via PRs when needed.
+oci==2.157.1
+kubernetes>=29.0.0
+PyYAML>=6.0.1
+mcp>=0.2.0
+
+# Makefile for OKE MCP Server
+# Usage examples:
+#   make install         # create venv (if missing) & install deps
+#   make run-stdio       # run via MCP stdio transport (best for CLI testing)
+#   make dev             # open MCP Inspector (browser) and auto-run server
+#   make run             # run the server directly (advanced/manual JSON I/O)
+
+SHELL := /bin/bash
+VENV ?= .venv
+PY := $(VENV)/bin/python
+PIP := $(VENV)/bin/pip
+
+# Default OCIDs can be provided via environment or Claude config.
+# export OKE_COMPARTMENT_ID=ocid1.compartment.oc1..xxxx
+# export OKE_CLUSTER_ID=ocid1.cluster.oc1..xxxx
+# export OCI_CLI_AUTH=security_token   # only if you use STS locally
+
+.PHONY: venv install run run-stdio dev clean
+
+venv:
+	@if [ ! -d "$(VENV)" ]; then \
+		python3 -m venv $(VENV); \
+		. $(VENV)/bin/activate; \
+		$(PIP) install --upgrade pip; \
+	fi
+
+install: venv
+	$(PIP) install -r requirements.txt
+
+# Run the MCP server directly (reads JSON-RPC from stdin)
+run: venv
+	$(PY) main.py
+
+# Preferred: run through the MCP CLI using stdio transport
+run-stdio: venv
+	MCP_LOG_LEVEL=DEBUG mcp run -t stdio $(PY) main.py
+
+# Launch MCP Inspector (browser) and auto-connect to this server
+# Requires `uv` installed: https://docs.astral.sh/uv/getting-started/installation/
+# If uv is not installed, set INSPECTOR_CMD to: mcp dev ./main.py
+INSPECTOR_CMD ?= mcp dev ./main.py
+
+dev: venv
+	MCP_LOG_LEVEL=DEBUG $(INSPECTOR_CMD)
+
+clean:
+	rm -rf $(VENV) __pycache__ **/__pycache__
