@@ -1,5 +1,23 @@
 #!/usr/bin/env python3
 from typing import List, Dict, Optional
+import argparse
+import os
+import sys
+import logging
+
+# Configure logging level via env var, default INFO
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("oke-mcp-server")
+
+# Ensure stdio flushes promptly in uvx/GUI contexts
+try:
+    sys.stdout.reconfigure(line_buffering=True)  # Python 3.7+
+except Exception:
+    pass
 from mcp.server.fastmcp import FastMCP
 
 from config_store import get_defaults, set_defaults, get_effective_defaults
@@ -27,6 +45,18 @@ from handlers.oke import (
 mcp = FastMCP("OKE MCP Server")
 
 # ---- Configuration tools ----
+
+# ---- Meta diagnostic tools ----
+@mcp.tool()
+def meta_health() -> Dict:
+    """Lightweight health check for MCP server."""
+    return {"status": "ok", "log_level": LOG_LEVEL}
+
+@mcp.tool()
+def meta_echo(payload: Optional[Dict] = None) -> Dict:
+    """Echo back payload for client troubleshooting."""
+    logger.debug("meta_echo payload=%s", payload)
+    return {"received": payload or {}}
 @mcp.tool()
 def config_set_defaults(compartment_id: Optional[str] = None, cluster_id: Optional[str] = None) -> Dict:
     """Set default compartment/cluster OCIDs for subsequent calls."""
@@ -232,5 +262,19 @@ def health() -> Dict:
         "effective": get_effective_defaults(),
     }
 
+def main() -> None:
+    """Console entrypoint for uvx/setuptools; selects MCP transport."""
+    parser = argparse.ArgumentParser(description="OKE MCP Server")
+    parser.add_argument(
+        "--transport",
+        default="stdio",
+        choices=["stdio"],  # extend when adding other transports
+        help="MCP transport to use (default: stdio)",
+    )
+    args = parser.parse_args()
+    logger.info("Starting OKE MCP Server (transport=%s, log_level=%s)", args.transport, LOG_LEVEL)
+    mcp.run(transport=args.transport)
+
+
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    main()

@@ -75,6 +75,32 @@ Before running the MCP server, ensure you have:
 
 ---
 
+## Run with uvx (Zero-Setup)
+
+If you have [uv](https://github.com/astral-sh/uv) installed, you can run the server without creating a local virtualenv or installing dependencies into your system Python.
+
+```bash
+# Run directly from source (useful during development)
+uvx --from . oke-mcp-server --transport stdio
+
+# Or run the published package (after you publish to PyPI)
+uvx oke-mcp-server --transport stdio
+```
+
+> **Tip:** Set logging for troubleshooting:
+>
+> ```bash
+> LOG_LEVEL=DEBUG uvx --from . oke-mcp-server --transport stdio
+> ```
+
+If you see no output when piping JSON into stdin, force unbuffered/stdout line buffering in your shell:
+
+```bash
+PYTHONUNBUFFERED=1 uvx --from . oke-mcp-server --transport stdio
+```
+
+---
+
 ## Project Structure
 
 - `main.py` — MCP server entry point  
@@ -190,8 +216,82 @@ Create or update `~/Library/Application Support/Claude/claude_desktop_config.jso
 }
 ```
 
+### Claude Desktop via uvx (recommended)
+
+Use uvx to fetch/build and run the console script automatically. Make sure to use the **absolute path** to `uvx` in `command` (GUI apps don’t inherit your shell PATH). You can find it with `which uvx`.
+
+```json
+{
+  "mcpServers": {
+    "oke": {
+      "command": "/Users/<you>/.local/bin/uvx",
+      "args": ["oke-mcp-server", "--transport", "stdio"],
+      "env": {
+        "OKE_COMPARTMENT_ID": "ocid1.compartment.oc1..YOUR_COMPARTMENT_OCID",
+        "OKE_CLUSTER_ID": "ocid1.cluster.oc1..YOUR_CLUSTER_OCID",
+        "OCI_CLI_AUTH": "security_token",
+        "LOG_LEVEL": "INFO",
+        "PATH": "/Users/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
+**Development from local source:** during development, point uvx at your repo to rebuild on changes:
+
+```json
+{
+  "mcpServers": {
+    "oke": {
+      "command": "/Users/<you>/.local/bin/uvx",
+      "args": ["--from", "/absolute/path/to/oke-mcp-server", "oke-mcp-server", "--transport", "stdio"],
+      "env": {
+        "OKE_COMPARTMENT_ID": "ocid1.compartment.oc1..YOUR_COMPARTMENT_OCID",
+        "OKE_CLUSTER_ID": "ocid1.cluster.oc1..YOUR_CLUSTER_OCID",
+        "OCI_CLI_AUTH": "security_token",
+        "LOG_LEVEL": "DEBUG",
+        "PATH": "/Users/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
 Restart Claude Desktop, then prompt it with:  
 > “Using **oke**, list pods in **default**”.
+
+---
+
+---
+
+## Packaging & Releases (uvx + PyPI + GitHub Actions)
+
+This project is configured to expose a console script `oke-mcp-server` (via `pyproject.toml`) so it can be launched by `uvx` or installed from PyPI.
+
+**Local build & smoke test**
+```bash
+python -m pip install --upgrade build twine
+python -m build
+pip install dist/oke_mcp_server-*.whl
+oke-mcp-server --transport stdio
+```
+
+**Publish to PyPI** (optional)
+```bash
+export TWINE_USERNAME="__token__"
+export TWINE_PASSWORD="pypi-XXXXXXXXXXXXXXXXX"
+twine upload dist/*
+```
+
+**Tagging releases**
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+**GitHub Actions (automate builds & publish on tag)**
+Add a workflow at `.github/workflows/publish.yml` to build on tag and publish to PyPI. This enables a fully automated path from PR → tag → packaged release → `uvx oke-mcp-server` for users.
 
 ---
 
