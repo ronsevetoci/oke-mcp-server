@@ -24,25 +24,6 @@ mcp>=0.2.0
 
 The `Makefile` included in this repository provides convenient commands for setting up the environment, running the server, and development tasks.
 
-**Makefile**
-```make
-SHELL := /bin/bash
-VENV ?= .venv
-PY := $(VENV)/bin/python
-PIP := $(VENV)/bin/pip
-
-.PHONY: venv install run run-stdio dev clean
-
-venv:
-	@if [ ! -d "$(VENV)" ]; then \
-		python3 -m venv $(VENV); \
-		. $(VENV)/bin/activate; \
-		$(PIP) install --upgrade pip; \
-	fi
-
-install: venv
-	$(PIP) install -r requirements.txt
-
 # Run the MCP server directly (reads JSON-RPC from stdin)
 run: venv
 	$(PY) main.py
@@ -91,8 +72,9 @@ clean:
 Key files in this repository include:
 
 - `main.py` — Entry point for the MCP server.
-- `oke_auth.py` — Handles OCI authentication.
-- `oke.py` — Core OKE logic and API interactions.
+- `oke_auth.py` — Handles OKE authentication.
+- `oci_auth.py` - Handles OCI authentication.
+- `handlers/oke.py` — Core OKE logic and API interactions.
 - `config_store.py` — Configuration management.
 - `requirements.txt` — Runtime dependencies.
 - `Makefile` — Build and run commands.
@@ -124,6 +106,12 @@ Key files in this repository include:
    ```
 
    You should see logs from the MCP server. It will now wait for JSON-RPC input on stdio (handled by MCP CLI).
+
+
+### JSON-RPC initilization commands - 
+  {"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual","version":"0.0.0"}}}
+  {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+
 
 4. **(Option A) Use MCP Inspector**
 
