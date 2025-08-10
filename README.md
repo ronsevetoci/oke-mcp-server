@@ -26,23 +26,26 @@ mcp>=0.2.0
 The provided `Makefile` offers convenient commands for setup, running the server, and development tasks:
 
 ```makefile
-# Run the MCP server directly (reads JSON-RPC from stdin)
-run: venv
-	$(PY) main.py
+install: venv
+	$(PY) -m pip install -r requirements.txt
 
-# Preferred: run through the MCP CLI using stdio transport
 run-stdio: venv
 	MCP_LOG_LEVEL=DEBUG mcp run -t stdio $(PY) main.py
 
-# Launch MCP Inspector (browser) and auto-connect to this server
-# If you encounter a 'uv' error, set INSPECTOR_CMD to: mcp dev ./main.py
-INSPECTOR_CMD ?= mcp dev ./main.py
-
 dev: venv
-	MCP_LOG_LEVEL=DEBUG $(INSPECTOR_CMD)
+	MCP_LOG_LEVEL=DEBUG mcp dev ./main.py
 
 clean:
 	rm -rf $(VENV) __pycache__ **/__pycache__
+
+format:
+	black .
+
+lint:
+	flake8 .
+
+typecheck:
+	mypy .
 ```
 
 ---
@@ -75,9 +78,11 @@ Before running the MCP server, ensure you have:
 
 ---
 
-## Run with uvx (Zero-Setup)
+## Running the MCP Server
 
-If you have [uv](https://github.com/astral-sh/uv) installed, you can run the server without creating a local virtualenv or installing dependencies into your system Python.
+### Primary: Using uvx (Zero-Setup)
+
+The recommended way to run the server is with [uv](https://github.com/astral-sh/uv) and its `uvx` launcher, which requires no local virtual environment or manual dependency installation.
 
 ```bash
 # Run directly from source (useful during development)
@@ -101,21 +106,9 @@ PYTHONUNBUFFERED=1 uvx --from . oke-mcp-server --transport stdio
 
 ---
 
-## Project Structure
+### Development Fallback: Using Virtualenv
 
-- `main.py` — MCP server entry point  
-- `oke_auth.py` — OKE authentication handler  
-- `oci_auth.py` — OCI authentication handler  
-- `handlers/oke.py` — Core OKE logic and API interactions  
-- `config_store.py` — Configuration management  
-- `requirements.txt` — Runtime dependencies  
-- `Makefile` — Build and run commands  
-
----
-
-## Quickstart (Local Setup)
-
-Follow these steps to get started quickly:
+If you prefer or need a local virtual environment, you can still use the traditional workflow:
 
 1. **Clean existing environment and install dependencies:**
 
@@ -141,49 +134,87 @@ Follow these steps to get started quickly:
    make run-stdio
    ```
 
-   The server will start and wait for JSON-RPC input on standard input.
+---
 
-4. **Initialize the JSON-RPC session:**
+### New CLI Flags
 
-   Send the following commands to initialize the MCP server:
+The MCP server now supports additional CLI flags to simplify usage:
 
-   ```json
-   {"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual","version":"0.0.0"}}}
-   {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
-   ```
+- `--set-defaults-compartment <compartment_ocid>`  
+  Sets the default compartment OCID used by the server, avoiding the need to specify it in every request.
 
-5. **(Optional) Use MCP Inspector for interactive debugging:**
+- `--set-defaults-cluster <cluster_ocid>`  
+  Sets the default cluster OCID used by the server.
 
-   ```bash
-   make dev
-   ```
+- `--print-tools`  
+  Prints a list of available MCP tools and their descriptions, including the newly added tools.
 
-   This opens the MCP Inspector in your browser and connects to the server. If launching `uv` fails, the command falls back to `mcp dev ./main.py`.
+---
 
-6. **(Optional) Manual JSON-RPC call example for listing pods:**
+### New Tools
 
-   After initialization, send this JSON-RPC request to list pods in the `default` namespace:
+Two new MCP tools have been added for enhanced usability:
 
-   ```json
-   {
-     "jsonrpc": "2.0",
-     "id": 1,
-     "method": "tools/call",
-     "params": {
-       "name": "oke_list_pods",
-       "arguments": {
-         "namespace": "default"
-       }
-     }
-   }
-   ```
+- `meta_env`  
+  Provides metadata about the server environment and configuration, useful for diagnostics and introspection.
+
+- `auth_refresh`  
+  Allows refreshing authentication tokens on-demand without restarting the server, especially useful when using security token authentication.
+
+---
+
+### Initializing the JSON-RPC Session
+
+After starting the server (preferably via `uvx`), initialize the MCP server by sending these JSON-RPC commands:
+
+```json
+{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual","version":"0.0.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+```
+
+---
+
+## Project Structure
+
+- `main.py` — MCP server entry point  
+- `oke_auth.py` — OKE authentication handler  
+- `oci_auth.py` — OCI authentication handler  
+- `handlers/oke.py` — Core OKE logic and API interactions  
+- `config_store.py` — Configuration management  
+- `auth_refresh.py` — Tool for refreshing authentication tokens without restart  
+- `meta_env.py` — Tool providing environment metadata and diagnostics  
+- `requirements.txt` — Runtime dependencies  
+- `Makefile` — Build and run commands  
+
+---
+
+## Quickstart Example: List Pods in Default Namespace
+
+After initializing the server, send this JSON-RPC request to list pods:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "oke_list_pods",
+    "arguments": {
+      "namespace": "default"
+    }
+  }
+}
+```
+
+Use `uvx` to run the server and test:
+
+```bash
+uvx --from . oke-mcp-server --transport stdio
+```
 
 ---
 
 ## Common Issues & Solutions
-
-- **Inspector connection error or `'uv'` command not found:**  
-  Use the default `make dev` command which falls back to `mcp dev ./main.py`. Install `uv` if you prefer to use it.
 
 - **401 Unauthorized when fetching pod logs:**  
   Ensure worker nodes allow inbound access on port **10250/tcp** from the Kubernetes API endpoint CIDR via NSG or Security List. This is required for `read_namespaced_pod_log` to succeed.
@@ -194,31 +225,32 @@ Follow these steps to get started quickly:
 - **Security token authentication issues:**  
   Confirm that `OCI_CLI_AUTH=security_token` is set in the server environment. The server automatically patches kubeconfig exec arguments with `--auth security_token`.
 
----
+- **Authentication token expiration:**  
+  Instead of restarting the server when your security token expires, use the `auth_refresh` tool to refresh tokens on-demand:
 
-## Using with Claude Desktop (Optional)
-
-Create or update `~/Library/Application Support/Claude/claude_desktop_config.json` with the following, replacing paths and OCIDs accordingly:
-
-```json
-{
-  "mcpServers": {
-    "oke": {
-      "command": "/absolute/path/to/.venv/bin/python",
-      "args": ["/absolute/path/to/main.py"],
-      "env": {
-        "OKE_COMPARTMENT_ID": "ocid1.compartment.oc1..YOUR_COMPARTMENT_OCID",
-        "OKE_CLUSTER_ID": "ocid1.cluster.oc1..YOUR_CLUSTER_OCID",
-        "OCI_CLI_AUTH": "security_token"
-      }
+  ```json
+  {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "method": "tools/call",
+    "params": {
+      "name": "auth_refresh",
+      "arguments": {}
     }
   }
-}
-```
+  ```
 
-### Claude Desktop via uvx (recommended)
+  This avoids downtime and streamlines token management.
 
-Use uvx to fetch/build and run the console script automatically. Make sure to use the **absolute path** to `uvx` in `command` (GUI apps don’t inherit your shell PATH). You can find it with `which uvx`.
+---
+
+## Using with Claude Desktop (Simplified)
+
+Create or update `~/Library/Application Support/Claude/claude_desktop_config.json` with the following, replacing paths and OCIDs accordingly.
+
+### Using uvx (recommended)
+
+Make sure to use the **absolute path** to `uvx` in `command` (GUI apps don’t inherit your shell PATH). You can find it with `which uvx`.
 
 ```json
 {
@@ -238,28 +270,24 @@ Use uvx to fetch/build and run the console script automatically. Make sure to us
 }
 ```
 
-**Development from local source:** during development, point uvx at your repo to rebuild on changes:
-
-```json
-{
-  "mcpServers": {
-    "oke": {
-      "command": "/Users/<you>/.local/bin/uvx",
-      "args": ["--from", "/absolute/path/to/oke-mcp-server", "oke-mcp-server", "--transport", "stdio"],
-      "env": {
-        "OKE_COMPARTMENT_ID": "ocid1.compartment.oc1..YOUR_COMPARTMENT_OCID",
-        "OKE_CLUSTER_ID": "ocid1.cluster.oc1..YOUR_CLUSTER_OCID",
-        "OCI_CLI_AUTH": "security_token",
-        "LOG_LEVEL": "DEBUG",
-        "PATH": "/Users/<you>/.local/bin:/usr/local/bin:/usr/bin:/bin"
-      }
-    }
-  }
-}
-```
-
 Restart Claude Desktop, then prompt it with:  
 > “Using **oke**, list pods in **default**”.
+
+---
+
+## Advanced Usage & Future Work
+
+- **MCP Inspector:**  
+  Previously, an MCP Inspector browser interface was available for interactive debugging and visualization. This has been removed to simplify the setup. Future versions may reintroduce this or alternative UIs.
+
+- **Multiple Transport Support:**  
+  Currently, only `stdio` transport is supported and documented. Other transports may be considered in future releases.
+
+- **Docker Usage:**  
+  Docker-based deployment instructions have been removed to focus on uvx and virtualenv workflows.
+
+- **Additional Makefile Targets:**  
+  Targets like `format`, `lint`, and `typecheck` are available for code quality checks and formatting.
 
 ---
 
@@ -274,7 +302,7 @@ This project is configured to expose a console script `oke-mcp-server` (via `pyp
 python -m pip install --upgrade build twine
 python -m build
 pip install dist/oke_mcp_server-*.whl
-oke-mcp-server --transport stdio
+uvx oke-mcp-server --transport stdio
 ```
 
 **Publish to PyPI** (optional)

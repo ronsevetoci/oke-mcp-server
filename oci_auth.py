@@ -7,6 +7,9 @@ from oci.signer import load_private_key
 _cached_config = None
 _cached_signer = None
 
+_token_path = None
+_token_mtime = None
+
 
 def get_config():
     """
@@ -32,17 +35,6 @@ def get_config():
         print(f"ERROR: Failed to load OCI config file: {e}")
         return {}
 
-    # Try to read security token if specified
-    if 'security_token_file' in config:
-        token_path = config['security_token_file']
-        if os.path.exists(token_path):
-            try:
-                with open(token_path, 'r') as f:
-                    config['security_token'] = f.read().strip()
-            except Exception as e:
-                print(f"ERROR: Failed to read security token file '{token_path}': {e}")
-        else:
-            print(f"WARNING: security_token_file '{token_path}' not found.")
     _cached_config = config
     return config
 
@@ -57,26 +49,35 @@ def get_signer(config):
     Returns:
         Signer: An OCI signer object, or None if config is invalid.
     """
-    global _cached_signer
-    if _cached_signer is not None:
-        return _cached_signer
+    global _cached_signer, _token_path, _token_mtime
+    if config is None:
+        return None
 
-    # Security token authentication
+    # Prefer security token auth if configured
     if 'security_token_file' in config and os.path.exists(config['security_token_file']):
         try:
-            with open(config['security_token_file'], 'r') as tf:
-                token = tf.read().strip()
-            with open(config['key_file'], 'r') as kf:
-                private_key = kf.read()
-            private_key_obj = load_private_key(private_key, pass_phrase=None)
-            print("DEBUG: Using security_token authentication method.")
-            signer = SecurityTokenSigner(token, private_key_obj)
-            _cached_signer = signer
-            return signer
+            path = config['security_token_file']
+            mtime = os.path.getmtime(path)
+            needs_new = (
+                _cached_signer is None or _token_path != path or _token_mtime != mtime
+            )
+            if needs_new:
+                with open(path, 'r') as tf:
+                    token = tf.read().strip()
+                with open(config['key_file'], 'r') as kf:
+                    private_key_pem = kf.read()
+                private_key_obj = load_private_key(private_key_pem, pass_phrase=None)
+                print("DEBUG: Using security_token authentication (auto-refresh if token rotates).")
+                signer = SecurityTokenSigner(token, private_key_obj)
+                _cached_signer = signer
+                _token_path = path
+                _token_mtime = mtime
+            return _cached_signer
         except Exception as e:
             print(f"ERROR: Failed to initialize SecurityTokenSigner: {e}")
             return None
-    # API key authentication
+
+    # Fallback to API key authentication
     required_keys = ['tenancy', 'user', 'fingerprint', 'key_file']
     missing_keys = [k for k in required_keys if k not in config]
     if missing_keys:
@@ -92,10 +93,19 @@ def get_signer(config):
             pass_phrase=config.get('pass_phrase')
         )
         _cached_signer = signer
+        _token_path = None
+        _token_mtime = None
         return signer
     except Exception as e:
         print(f"ERROR: Failed to initialize API key signer: {e}")
         return None
+
+def invalidate_auth_cache():
+    global _cached_config, _cached_signer, _token_path, _token_mtime
+    _cached_config = None
+    _cached_signer = None
+    _token_path = None
+    _token_mtime = None
 
 def get_container_engine_client():
     """
@@ -105,6 +115,7 @@ def get_container_engine_client():
     """
     config = get_config()
     signer = get_signer(config)
+    # Signer auto-refresh is handled by get_signer
     return oci.container_engine.ContainerEngineClient(config, signer=signer)
 
 def get_identity_client():
@@ -115,4 +126,5 @@ def get_identity_client():
     """
     config = get_config()
     signer = get_signer(config)
+    # Signer auto-refresh is handled by get_signer
     return oci.identity.IdentityClient(config, signer=signer)
