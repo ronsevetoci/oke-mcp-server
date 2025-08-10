@@ -190,22 +190,3 @@ Create `~/Library/Application Support/Claude/claude_desktop_config.json` with th
 
 Restart Claude, then prompt it with:  
 “Using **oke**, list pods in **default**”.
-
----
-
-## Next (Roadmap)
-
-- **[High Priority]** Add write operations (opt-in):  
-  - Scale node pools  
-  - Apply manifests (with dry-run & guardrails)
-
-- **[Medium Priority]** Add CI tooling:  
-  - ruff, black, mypy, pytest
-
-- **[Medium Priority]** Provide a Dockerfile for easy deployment.
-
-- **[Low Priority]** Support in-cluster mode (ServiceAccount + Workload Identity) for running inside OKE.
-
----
-
-If any step here does not work on your machine, please provide exact failure details and we’ll adjust the scripts or Makefile to suit your environment.
