@@ -52,3 +52,146 @@ dev: venv
 
 clean:
 	rm -rf $(VENV) __pycache__ **/__pycache__
+
+# OKE MCP Server (Python)
+
+A Model Context Protocol (MCP) server that lets LLMs (and MCP-aware clients) inspect and troubleshoot **Oracle Container Engine for Kubernetes (OKE)**.
+
+This README gives you a clean, working quickstart. If anything here fails on your machine, ping me and I’ll tweak it.
+
+---
+## Prerequisites
+- **Python 3.10+** (3.11 recommended)
+- **OCI credentials**:
+  - For local dev using security tokens (like your kubectl): set `OCI_CLI_AUTH=security_token` and log in via the OCI CLI/console to refresh your token
+  - Or use API key in `~/.oci/config` (DEFAULT or a named profile)
+- **MCP CLI** (`mcp`). If you don’t have it:
+  ```bash
+  pipx install mcp  # or: pip install mcp
+  ```
+
+> Tip: If you use security tokens locally, your `kubectl` likely already works. This server mirrors that flow (it will patch the kubeconfig exec args with `--auth security_token`).
+
+---
+## Files you should have in this repo
+If any are missing, create them exactly as below.
+
+**requirements.txt**
+```txt
+oci==2.157.1
+kubernetes>=29.0.0
+PyYAML>=6.0.1
+mcp>=0.2.0
+```
+
+**Makefile**
+```make
+SHELL := /bin/bash
+VENV ?= .venv
+PY := $(VENV)/bin/python
+PIP := $(VENV)/bin/pip
+
+.PHONY: venv install run run-stdio dev clean
+
+venv:
+	@if [ ! -d "$(VENV)" ]; then \
+		python3 -m venv $(VENV); \
+		. $(VENV)/bin/activate; \
+		$(PIP) install --upgrade pip; \
+	fi
+
+install: venv
+	$(PIP) install -r requirements.txt
+
+# Run the MCP server directly (reads JSON-RPC from stdin)
+run: venv
+	$(PY) main.py
+
+# Preferred: run through the MCP CLI using stdio transport
+run-stdio: venv
+	MCP_LOG_LEVEL=DEBUG mcp run -t stdio $(PY) main.py
+
+# Launch MCP Inspector (browser) and auto-connect to this server
+# If you see a UV error, set INSPECTOR_CMD to: mcp dev ./main.py
+INSPECTOR_CMD ?= mcp dev ./main.py
+
+dev: venv
+	MCP_LOG_LEVEL=DEBUG $(INSPECTOR_CMD)
+
+clean:
+	rm -rf $(VENV) __pycache__ **/__pycache__
+```
+
+> If you already had a file named `README` that mixed requirements & Makefile text: this README replaces it. Keep `requirements.txt` and `Makefile` as **separate files** in the repo root.
+
+---
+## Quickstart (local)
+1) **Create venv & install deps**
+```bash
+make install
+```
+
+2) **Export defaults** (so you don’t have to pass OCIDs on every call)
+```bash
+export OKE_COMPARTMENT_ID="ocid1.compartment.oc1..YOUR_COMP"
+export OKE_CLUSTER_ID="ocid1.cluster.oc1..YOUR_CLUSTER"
+# Only if you use security tokens locally:
+export OCI_CLI_AUTH=security_token
+```
+
+3) **Run the server** (stdio via MCP CLI)
+```bash
+make run-stdio
+```
+You should see logs from the MCP server. It’s now waiting for JSON-RPC on stdio (MCP CLI handles the session).
+
+4) **(Option A) Use MCP Inspector**
+```bash
+make dev
+```
+This opens the Inspector in your browser and connects to the server. If it can’t launch `uv`, it will still work with `mcp dev ./main.py`.
+
+5) **(Option B) Manual JSON-RPC (for debugging)**
+After `initialize` and `notifications/initialized`, send a tools call:
+```json
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+  "name":"oke_list_pods",
+  "arguments":{"namespace":"default"}
+}}
+```
+
+---
+## Common gotchas & fixes
+- **Inspector connection error / uv not found**: `make dev` defaults to `mcp dev ./main.py`. If you changed `INSPECTOR_CMD` to use `uv`, install it or switch back.
+- **401 Unauthorized on pod logs**: Open worker nodes’ **10250/tcp** from the K8s API endpoint CIDR to nodes (NSG/SecList). This is required for `read_namespaced_pod_log` to work.
+- **“Invalid kubeconfig … mapping/str”**: The server now robustly decodes OCI’s kubeconfig payload; if you still see this, it likely means your kubeconfig is malformed—paste the first 200 chars in an issue and we’ll handle it.
+- **Security token auth**: Ensure `OCI_CLI_AUTH=security_token` is set in the server process **env**. We patch kubeconfig exec args to include `--auth security_token` automatically.
+
+---
+## Using with Claude Desktop (optional)
+Create `~/Library/Application Support/Claude/claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "oke": {
+      "command": "/absolute/path/to/.venv/bin/python",
+      "args": ["/absolute/path/to/main.py"],
+      "env": {
+        "OKE_COMPARTMENT_ID": "ocid1.compartment.oc1..YOUR_COMP",
+        "OKE_CLUSTER_ID": "ocid1.cluster.oc1..YOUR_CLUSTER",
+        "OCI_CLI_AUTH": "security_token"
+      }
+    }
+  }
+}
+```
+Restart Claude; then prompt it: “Using **oke**, list pods in **default**”.
+
+---
+## Next
+- Add write operations (opt-in): scale node pool, apply manifests (with dry-run & guardrails)
+- Add CI (ruff/black/mypy/pytest) and Dockerfile for easy deployment
+- In-cluster mode (ServiceAccount + Workload Identity) for running inside OKE
+
+---
+If any step here doesn’t work on your machine, tell me exactly where it fails and I’ll adjust the script or Makefile to match your environment.

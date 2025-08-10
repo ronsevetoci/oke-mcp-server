@@ -1,40 +1,3 @@
-def _read_response_text(data_obj) -> str:
-    """Return response payload as text from various SDK stream shapes.
-    Handles bytes, str, file-like objects, requests.Response, urllib3 responses, etc.
-    """
-    # Direct primitives
-    if isinstance(data_obj, (bytes, bytearray)):
-        return data_obj.decode("utf-8", errors="replace")
-    if isinstance(data_obj, str):
-        return data_obj
-
-    # requests.Response-like
-    text = getattr(data_obj, "text", None)
-    if isinstance(text, str) and text:
-        return text
-
-    # file-like (has read())
-    read = getattr(data_obj, "read", None)
-    if callable(read):
-        try:
-            b = read()
-            if isinstance(b, (bytes, bytearray)):
-                return b.decode("utf-8", errors="replace")
-            if isinstance(b, str):
-                return b
-        except Exception:
-            pass
-
-    # objects with .data or .raw that is file-like
-    inner = getattr(data_obj, "data", None)
-    if inner is not None and inner is not data_obj:
-        return _read_response_text(inner)
-    raw = getattr(data_obj, "raw", None)
-    if raw is not None and raw is not data_obj:
-        return _read_response_text(raw)
-
-    # Fallback: last-resort string coercion
-    return str(data_obj)
 # oke_auth.py
 """
 Helpers for connecting to an OKE cluster's Kubernetes API.
@@ -45,6 +8,10 @@ Helpers for connecting to an OKE cluster's Kubernetes API.
 """
 
 from typing import Optional, Union
+import os
+import time
+import threading
+from typing import Dict, Tuple
 
 import oci
 import yaml
@@ -54,12 +21,58 @@ from oci.container_engine.models import CreateClusterKubeconfigContentDetails
 from oci_auth import get_config, get_signer
 
 
+# Simple in-memory cache: {(cluster_id, endpoint, token_version): (cfg_dict, expires_at)}
+_CFG_CACHE: Dict[Tuple[str, str, str], Tuple[dict, float]] = {}
+_CACHE_LOCK = threading.RLock()
+
+def _maybe_patch_security_token_exec(cfg: dict) -> None:
+    """If OCI_CLI_AUTH=security_token, ensure the kubeconfig user exec args include it.
+    This matches local kubectl behavior when users rely on STS.
+    """
+    if os.getenv("OCI_CLI_AUTH", "").lower() != "security_token":
+        return
+    try:
+        users = cfg.get("users") or []
+        if not isinstance(users, list):
+            return
+        for u in users:
+            user = u.get("user") if isinstance(u, dict) else None
+            if not isinstance(user, dict):
+                continue
+            exec_cfg = user.get("exec")
+            if not isinstance(exec_cfg, dict):
+                continue
+            args = exec_cfg.get("args")
+            if not isinstance(args, list):
+                continue
+            if "--auth" in args:
+                # Update value if present but different
+                try:
+                    idx = args.index("--auth")
+                    if idx + 1 < len(args):
+                        args[idx + 1] = "security_token"
+                    else:
+                        args.extend(["--auth", "security_token"])
+                except Exception:
+                    pass
+            else:
+                args.extend(["--auth", "security_token"])
+    except Exception:
+        # Best-effort; do not fail kubeconfig load due to patch
+        pass
+
+
 def _resolve_endpoint(endpoint: Union[str, None]) -> str:
     """Normalize endpoint to the SDK constant used by CreateClusterKubeconfigContentDetails.
 
     Accepts either the SDK constants or human-friendly strings like
     "PUBLIC" / "PRIVATE" (case-insensitive). Defaults to PUBLIC when None.
     """
+    # Environment override (e.g., OKE_ENDPOINT=PRIVATE)
+    env_ep = os.getenv("OKE_ENDPOINT")
+    if endpoint is None and env_ep:
+        endpoint = env_ep
+
     default_public = CreateClusterKubeconfigContentDetails.ENDPOINT_PUBLIC_ENDPOINT
     if endpoint is None:
         return default_public
@@ -86,6 +99,15 @@ def _load_kubeconfig_for_cluster(
     pass a `CreateClusterKubeconfigContentDetails` instance via the
     `create_cluster_kubeconfig_content_details` keyword argument.
     """
+    # Respect simple in-memory cache when not expired
+    cache_key = (cluster_id, str(endpoint), str(token_version))
+    now = time.time()
+    with _CACHE_LOCK:
+        entry = _CFG_CACHE.get(cache_key)
+        if entry and entry[1] > now:
+            k8s_config.load_kube_config_from_dict(entry[0])
+            return
+
     config = get_config()
     signer = get_signer(config)
     ce = oci.container_engine.ContainerEngineClient(config, signer=signer)
@@ -170,6 +192,8 @@ def _load_kubeconfig_for_cluster(
     if cfg is None:
         raise ValueError("Invalid kubeconfig content: expected a YAML mapping after decoding")
 
+    _maybe_patch_security_token_exec(cfg)
+
     # Some SDK versions/tenancies emit kubeconfig without `current-context`.
     # If there is exactly one context, set it as current to satisfy the k8s loader.
     if "current-context" not in cfg:
@@ -213,6 +237,11 @@ def _load_kubeconfig_for_cluster(
 
     k8s_config.load_kube_config_from_dict(cfg)
 
+    # Cache the parsed config for a short duration to avoid re-fetching on repeated calls
+    ttl = max(300, min(int(expiration or 3600) // 6, 1200))  # between 5m and 20m
+    with _CACHE_LOCK:
+        _CFG_CACHE[cache_key] = (cfg, time.time() + ttl)
+
 
 def get_core_v1_client(
     cluster_id: str,
@@ -227,6 +256,11 @@ def get_core_v1_client(
     `endpoint` may be a constant from CreateClusterKubeconfigContentDetails
     or a string: "PUBLIC" / "PUBLIC_ENDPOINT" / "PRIVATE" / "PRIVATE_ENDPOINT".
     """
+    # In-cluster fast path (for future/CI use): set OKE_IN_CLUSTER=1 to skip OCI kubeconfig
+    if os.getenv("OKE_IN_CLUSTER") in ("1", "true", "True") or os.getenv("RUN_MODE") == "in_cluster":
+        k8s_config.load_incluster_config()
+        return k8s_client.CoreV1Api()
+
     endpoint = _resolve_endpoint(endpoint)
     _load_kubeconfig_for_cluster(
         cluster_id,
@@ -251,6 +285,11 @@ def get_apps_v1_client(
     `endpoint` may be a constant from CreateClusterKubeconfigContentDetails
     or a string: "PUBLIC" / "PUBLIC_ENDPOINT" / "PRIVATE" / "PRIVATE_ENDPOINT".
     """
+    # In-cluster fast path (for future/CI use): set OKE_IN_CLUSTER=1 to skip OCI kubeconfig
+    if os.getenv("OKE_IN_CLUSTER") in ("1", "true", "True") or os.getenv("RUN_MODE") == "in_cluster":
+        k8s_config.load_incluster_config()
+        return k8s_client.AppsV1Api()
+
     endpoint = _resolve_endpoint(endpoint)
     _load_kubeconfig_for_cluster(
         cluster_id,
@@ -259,3 +298,42 @@ def get_apps_v1_client(
         expiration=expiration,
     )
     return k8s_client.AppsV1Api()
+
+
+def _read_response_text(data_obj) -> str:
+    """Return response payload as text from various SDK stream shapes.
+    Handles bytes, str, file-like objects, requests.Response, urllib3 responses, etc.
+    """
+    # Direct primitives
+    if isinstance(data_obj, (bytes, bytearray)):
+        return data_obj.decode("utf-8", errors="replace")
+    if isinstance(data_obj, str):
+        return data_obj
+
+    # requests.Response-like
+    text = getattr(data_obj, "text", None)
+    if isinstance(text, str) and text:
+        return text
+
+    # file-like (has read())
+    read = getattr(data_obj, "read", None)
+    if callable(read):
+        try:
+            b = read()
+            if isinstance(b, (bytes, bytearray)):
+                return b.decode("utf-8", errors="replace")
+            if isinstance(b, str):
+                return b
+        except Exception:
+            pass
+
+    # objects with .data or .raw that is file-like
+    inner = getattr(data_obj, "data", None)
+    if inner is not None and inner is not data_obj:
+        return _read_response_text(inner)
+    raw = getattr(data_obj, "raw", None)
+    if raw is not None and raw is not data_obj:
+        return _read_response_text(raw)
+
+    # Fallback: last-resort string coercion
+    return str(data_obj)

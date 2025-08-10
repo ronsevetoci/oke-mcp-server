@@ -1,0 +1,35 @@
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+.venv/
+ENV/
+env/
+bin/
+lib/
+include/
+commands.txt
+
+# MacOS metadata
+.DS_Store
+
+# Logs
+*.log
+
+# Editor configs
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# MCP / temp runtime files
+*.pid
+*.lock
+.cache/
