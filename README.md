@@ -6,7 +6,7 @@ This README provides a clean, working quickstart and detailed information about 
 
 ---
 
-[![Watch the demo](assets/demo-thumbnail.png)](assets/demo.mp4)
+[![Watch the demo](assets/demo-thumbnail.png)](assets/demo.mov)
 
 ## Runtime Dependencies
 
