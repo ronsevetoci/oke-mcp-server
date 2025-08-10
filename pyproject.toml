@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oke-mcp-server"
+version = "0.1.0"
+description = "MCP server for Oracle OKE (Oracle Container Engine for Kubernetes)"
+readme = "README.md"
+authors = [{ name = "Ron Sevet" }]
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = [
+  "oci==2.157.1",
+  "kubernetes>=29.0.0",
+  "PyYAML>=6.0.1",
+  "mcp>=0.2.0",
+]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Developers",
+  "Topic :: System :: Monitoring",
+  "Topic :: System :: Systems Administration",
+]
+
+urls = { "Homepage" = "https://github.com/ronsevetoci/oke-mcp-server" }
+
+[project.scripts]
+oke-mcp-server = "main:main"
+
+# === setuptools config ===
+# Top-level single-file modules:
+[tool.setuptools]
+py-modules = ["main", "oci_auth", "oke_auth", "config_store"]
+
+# Also ship the handlers package (directory)
+[tool.setuptools.packages.find]
+include = ["handlers*"]
+namespaces = false
