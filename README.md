@@ -6,7 +6,7 @@ This README provides a clean, working quickstart and detailed information about 
 
 ---
 
-[![Watch the demo](assets/demo-thumbnail.png)](assets/demo.mov)
+<video src="assets/demo.mp4" autoplay loop muted playsinline controls width="800"></video>
 
 ## Runtime Dependencies
 
