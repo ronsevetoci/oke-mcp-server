@@ -544,6 +544,36 @@ def top_pods(params: Dict) -> Dict:
     return {"available": True, "items": rows[:limit]}
 
 
+# --- NODE METRICS -----------------------------------------------------------
+
+def list_node_metrics(params: Dict) -> Dict:
+    """Raw node CPU/memory from metrics.k8s.io (if installed).
+
+    Inputs:
+      - cluster_id (required)
+    """
+    cluster_id = _param(params, "cluster_id", "clusterId")
+    if not cluster_id:
+        raise ValueError("Missing cluster_id/clusterId")
+
+    api_client = get_core_v1_client(cluster_id).api_client
+    co = k8s_client.CustomObjectsApi(api_client)
+    try:
+        data = co.list_cluster_custom_object("metrics.k8s.io", "v1beta1", "nodes")
+    except Exception as e:
+        return {"available": False, "reason": str(e)}
+
+    items = []
+    for it in data.get("items", []):
+        items.append({
+            "node": it["metadata"]["name"],
+            "usage": it.get("usage", {}),
+            "timestamp": it.get("timestamp"),
+            "window": it.get("window"),
+        })
+    return {"available": True, "items": items}
+
+
 def rbac_who_can(params: Dict) -> Dict:
     """Naive RBAC scan to find subjects who have verb on resource (namespace-scoped).
 
