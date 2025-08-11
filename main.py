@@ -51,7 +51,9 @@ from handlers.oke import (
     scale_node_pool as _scale_node_pool,
     list_work_requests as _list_work_requests,
     restart_deployment as _restart_deployment,
+    list_node_metrics as _list_node_metrics,
 )
+from handlers.traffic import build_graph_for_pod as _build_graph_for_pod, build_graph_for_service as _build_graph_for_service
 
 mcp = FastMCP(SERVER_NAME)
 
@@ -198,6 +200,28 @@ def oke_list_events(namespace: Optional[str] = None, since_seconds: Optional[int
     })
 
 @mcp.tool()
+def oke_describe_traffic(
+    target_kind: str,
+    name: str,
+    namespace: Optional[str] = "default",
+) -> Dict:
+    kind = (target_kind or "").lower()
+    ns = namespace or "default"
+
+    # Resolve cluster_id like other tools
+    defaults = get_effective_defaults()
+    cluster_id = defaults.get("cluster_id")
+    if not cluster_id:
+        raise ValueError("cluster_id is required (set via config_set_defaults or pass explicitly)")
+
+    if kind == "pod":
+        return _build_graph_for_pod(cluster_id=cluster_id, name=name, namespace=ns)
+    if kind == "service":
+        return _build_graph_for_service(cluster_id=cluster_id, name=name, namespace=ns)
+
+    return {"error": "target_kind must be 'pod' or 'service'"}
+
+@mcp.tool()
 def oke_describe_resources(cluster_id: Optional[str] = None,
                            compartment_id: Optional[str] = None,
                            since_seconds: Optional[int] = 1800) -> Dict:
@@ -245,6 +269,17 @@ def oke_top_pods(cluster_id: Optional[str] = None, namespace: Optional[str] = No
         "namespace": namespace,
         "limit": limit,
     })
+
+
+# ---- OKE node metrics tool ----
+@mcp.tool()
+def oke_list_node_metrics() -> Dict:
+    """Raw node CPU/memory via metrics.k8s.io (if available)."""
+    defaults = get_effective_defaults()
+    cluster_id = defaults.get("cluster_id")
+    if not cluster_id:
+        raise ValueError("cluster_id is required (set via config_set_defaults or pass explicitly)")
+    return _list_node_metrics({"cluster_id": cluster_id})
 
 @mcp.tool()
 def oke_rbac_who_can(verb: str, resource: str, namespace: Optional[str] = None, cluster_id: Optional[str] = None) -> Dict:
