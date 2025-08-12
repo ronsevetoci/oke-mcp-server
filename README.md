@@ -324,3 +324,14 @@ Add a workflow at `.github/workflows/publish.yml` to build on tag and publish to
 ---
 
 Thank you for using the OKE MCP Server. If you encounter any issues or have feature requests, please open an issue on the repository.
+
+
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"k8s_list","arguments":{"cluster_id":"ocid1.cluster.oc1.eu-frankfurt-1.aaaaaaaacbi4bn7vsbwepxkhfr63gg6bcboqjmu7ievqzimnycovvdfp7jxa","kind":"Pod","namespace":"default","auth":"security_token","limit":20}}}
+
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"k8s_list","arguments":{"cluster_id":"ocid1.cluster.oc1.eu-frankfurt-1.aaaaaaaacbi4bn7vsbwepxkhfr63gg6bcboqjmu7ievqzimnycovvdfp7jxa","kind":"Pod","namespace":"default","limit":20}}}
+
+OKE_COMPARTMENT_ID="ocid1.compartment.oc1..aaaaaaaayevnkjfyjb6nglndfrvgoy7hciclgf4kq7ioulokey7xfpixjhxa"
+
+OKE_CLUSTER_ID="ocid1.cluster.oc1.eu-frankfurt-1.aaaaaaaacbi4bn7vsbwepxkhfr63gg6bcboqjmu7ievqzimnycovvdfp7jxa"
+
+OCI_CLI_AUTH="security_token"

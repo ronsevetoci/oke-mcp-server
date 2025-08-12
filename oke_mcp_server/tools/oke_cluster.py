@@ -3,16 +3,33 @@ from typing import Optional, Dict, List
 from fastmcp import Context
 from ..auth import get_container_engine_client
 from ..config import settings
+from datetime import datetime
+
+def _dt(v):
+    return v.isoformat() if isinstance(v, datetime) else v
+
+def _cluster_endpoints(ep) -> Dict:
+    if not ep:
+        return {}
+    def g(name):
+        return getattr(ep, name, None)
+    return {
+        "kubernetes": g("kubernetes") or g("kubernetes_endpoint") or g("kubernetesEndpoint"),
+        "public_endpoint": g("public_endpoint") or g("publicEndpoint"),
+        "private_endpoint": g("private_endpoint") or g("privateEndpoint"),
+        "dashboard": g("kubernetes_dashboard") or g("kubernetesDashboard"),
+    }
 
 def _trim_cluster(c) -> dict:
-    md = getattr(c, "metadata", None)
-    status = getattr(c, "lifecycle_state", None) or getattr(c, "lifecycleDetails", None)
     return {
-        "id": getattr(c, "id", ""),
-        "name": getattr(md, "name", getattr(c, "name", "")),
-        "k8sVersion": getattr(c, "kubernetes_version", None),
-        "lifecycle": status,
-        "endpoints": getattr(c, "endpoints", None),
+        "id": getattr(c, "id", None),
+        "name": getattr(c, "name", None),
+        "kubernetes_version": getattr(c, "kubernetes_version", None),
+        "lifecycle_state": getattr(c, "lifecycle_state", None) or getattr(c, "lifecycleState", None),
+        "compartment_id": getattr(c, "compartment_id", None),
+        "vcn_id": getattr(c, "vcn_id", None),
+        "endpoints": _cluster_endpoints(getattr(c, "endpoints", None)),
+        "time_created": _dt(getattr(c, "time_created", None) or getattr(c, "timeCreated", None)),
     }
 
 def oke_list_clusters(ctx: Context, compartment_id: str, page: Optional[str] = None, limit: Optional[int] = 20) -> Dict:

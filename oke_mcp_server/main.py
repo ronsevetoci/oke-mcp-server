@@ -9,11 +9,6 @@ from fastmcp import FastMCP
 from .config import settings, get_effective_defaults
 import signal
 
-# Import tools (registration via decorators)
-from .tools.k8s import k8s_list, k8s_get     # noqa: F401
-from .tools.oke_cluster import oke_list_clusters, oke_get_cluster  # noqa: F401
-from .tools.metrics import oke_list_node_metrics, oke_list_pod_metrics  # noqa: F401
-from .tools.events import oke_list_events  # noqa: F401
 
 SERVER_NAME = "OKE MCP Server"
 try:
@@ -49,6 +44,35 @@ def main() -> None:
     mcp = FastMCP(
         name=SERVER_NAME,
         instructions="Tools to manage Oracle OKE clusters & Kubernetes resources. Keep responses concise.",
+    )
+
+    # --- Explicit tool registration (decorator-free) ---
+    from .tools import k8s as k8s_tools
+    from .tools import oke_cluster as oke_cluster_tools
+    from .tools import metrics as metrics_tools
+    from .tools import events as events_tools
+
+    mcp.tool(name="k8s_list", description="List Kubernetes resources (trimmed). Supports kind={Pod|Service|Namespace|Node|Deployment|ReplicaSet|Endpoints|EndpointSlice|HPA}.")(k8s_tools.k8s_list)
+    mcp.tool(name="k8s_get", description="Get a single Kubernetes resource by kind/name (trimmed).")(
+        k8s_tools.k8s_get
+    )
+
+    mcp.tool(name="oke_list_clusters", description="List OKE clusters in a compartment (trimmed).")(
+        oke_cluster_tools.oke_list_clusters
+    )
+    mcp.tool(name="oke_get_cluster", description="Get an OKE cluster by OCID (trimmed).")(
+        oke_cluster_tools.oke_get_cluster
+    )
+
+    mcp.tool(name="oke_list_node_metrics", description="List node metrics from metrics.k8s.io if available.")(
+        metrics_tools.oke_list_node_metrics
+    )
+    mcp.tool(name="oke_list_pod_metrics", description="List pod metrics (optionally namespaced) from metrics.k8s.io if available.")(
+        metrics_tools.oke_list_pod_metrics
+    )
+
+    mcp.tool(name="oke_list_events", description="List Kubernetes events (optionally namespaced).")(
+        events_tools.oke_list_events
     )
 
     @mcp.tool()
