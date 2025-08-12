@@ -1,36 +1,13 @@
-# Python cache and compiled files
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-commands.txt
-# Virtual environment
-venv/
-.venv/
-ENV/
-env/
-bin/
-lib/
-include/
-commands.txt
-pyenv.cff
-
-# MacOS metadata
-.DS_Store
-
-# Logs
 *.log
-
-# Editor configs
-.vscode/
-.idea/
-
-# Build artifacts
-build/
-dist/
 *.egg-info/
-
-# MCP / temp runtime files
-*.pid
-*.lock
-.cache/
+dist/
+build/
+.venv/
+.uv/
+.mypy_cache/
+.pytest_cache/
+.env
+commands.txt
