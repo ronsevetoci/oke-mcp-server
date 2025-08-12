@@ -1,13 +1,28 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 *.log
-*.egg-info/
-dist/
-build/
+
+# Virtual environment
+venv/
+.env/
 .venv/
-.uv/
-.mypy_cache/
-.pytest_cache/
-.env
-commands.txt
+env/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Secrets
+*.env
+config.yaml
