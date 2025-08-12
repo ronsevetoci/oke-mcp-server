@@ -27,6 +27,44 @@ def _pod_ready(status) -> Optional[str]:
     except Exception:
         return None
 
+# Inserted helper function
+def _service_public_endpoints(api: k8s_client.CoreV1Api, s) -> dict:
+    """Return external info for a Service (if any) and target pods."""
+    spec = getattr(s, "spec", None)
+    stype = getattr(spec, "type", None) or ""
+    ns = getattr(s.metadata, "namespace", "")
+    name = getattr(s.metadata, "name", "")
+
+    lb = getattr(getattr(s, "status", None), "load_balancer", None)
+    ing = getattr(lb, "ingress", None) if lb else None
+    lb_hosts = []
+    if ing:
+        for i in ing:
+            h = getattr(i, "hostname", None) or getattr(i, "ip", None)
+            if h:
+                lb_hosts.append(h)
+
+    ports = getattr(spec, "ports", []) or []
+    nodeports = [getattr(p, "node_port", None) for p in ports if getattr(p, "node_port", None)]
+
+    selector = getattr(spec, "selector", None) or {}
+    pods_slim = []
+    if selector:
+        sel = ",".join(f"{k}={v}" for k, v in selector.items())
+        try:
+            pods = api.list_namespaced_pod(ns, label_selector=sel, limit=200).items
+            for p in pods:
+                pods_slim.append(_summary_pod(p))
+        except Exception:
+            pass
+
+    return {
+        "service": {"namespace": ns, "name": name, "type": stype},
+        "loadBalancer": lb_hosts or None,
+        "nodePorts": nodeports or None,
+        "pods": pods_slim,
+    }
+
 # Tools
 
 def k8s_list(
@@ -60,7 +98,7 @@ def k8s_list(
                 if namespace else
                 api.list_pod_for_all_namespaces(label_selector=label_selector, field_selector=field_selector, limit=limit, _continue=continue_token))
         items = [_summary_pod(o) for o in resp.items]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l == "service":
         resp = (api.list_namespaced_service(namespace=namespace, label_selector=label_selector, limit=limit, _continue=continue_token)
@@ -68,7 +106,7 @@ def k8s_list(
                 api.list_service_for_all_namespaces(label_selector=label_selector, limit=limit, _continue=continue_token))
         svcs = resp.items
         items = [{"name": s.metadata.name, "namespace": s.metadata.namespace, "type": getattr(s.spec, "type", None)} for s in svcs]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
         if hints:
             for s in svcs:
@@ -95,12 +133,12 @@ def k8s_list(
     elif kind_l == "namespace":
         resp = api.list_namespace(limit=limit, _continue=continue_token)
         items = [{"name": o.metadata.name} for o in resp.items]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l == "node":
         resp = api.list_node(limit=limit, _continue=continue_token)
         items = [{"name": o.metadata.name} for o in resp.items]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l == "deployment":
         resp = (apps.list_namespaced_deployment(namespace=namespace, label_selector=label_selector, limit=limit, _continue=continue_token)
@@ -110,7 +148,7 @@ def k8s_list(
         items = [{"name": d.metadata.name, "namespace": d.metadata.namespace,
                   "replicas": getattr(d.status, "replicas", 0),
                   "available": getattr(d.status, "available_replicas", 0)} for d in deps]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l == "replicaset":
         resp = (apps.list_namespaced_replica_set(namespace=namespace, label_selector=label_selector, limit=limit, _continue=continue_token)
@@ -118,7 +156,7 @@ def k8s_list(
                 apps.list_replica_set_for_all_namespaces(label_selector=label_selector, limit=limit, _continue=continue_token))
         rs = resp.items
         items = [{"name": r.metadata.name, "namespace": r.metadata.namespace} for r in rs]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l == "endpoints":
         resp = (api.list_namespaced_endpoints(namespace=namespace, limit=limit, _continue=continue_token)
@@ -126,7 +164,7 @@ def k8s_list(
                 api.list_endpoints_for_all_namespaces(limit=limit, _continue=continue_token))
         eps = resp.items
         items = [{"name": e.metadata.name, "namespace": e.metadata.namespace} for e in eps]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l == "endpointslice":
         resp = (disc.list_namespaced_endpoint_slice(namespace=namespace, limit=limit, _continue=continue_token)
@@ -134,7 +172,7 @@ def k8s_list(
                 disc.list_endpoint_slice_for_all_namespaces(limit=limit, _continue=continue_token))
         es = resp.items
         items = [{"name": e.metadata.name, "namespace": e.metadata.namespace} for e in es]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l in ("hpa", "horizontalpodautoscaler"):
         resp = (autos.list_namespaced_horizontal_pod_autoscaler(namespace=namespace, limit=limit, _continue=continue_token)
@@ -144,7 +182,7 @@ def k8s_list(
         items = [{"name": h.metadata.name, "namespace": h.metadata.namespace,
                   "minReplicas": getattr(h.spec, "min_replicas", None),
                   "maxReplicas": getattr(h.spec, "max_replicas", None)} for h in hpas]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
     elif kind_l == "ingress":
         resp = (
@@ -168,7 +206,7 @@ def k8s_list(
                 "rules": len(rules),
             }
         items = [_ing_item(i) for i in ings]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
         if hints:
             for ing in ings:
@@ -341,7 +379,7 @@ def k8s_list(
             "accessModes": getattr(getattr(p, "spec", None), "access_modes", None),
             "requested": (getattr(getattr(getattr(p, "spec", None), "resources", None), "requests", {}) or {}).get("storage") if getattr(getattr(p, "spec", None), "resources", None) else None,
         } for p in pvcs]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
         if hints:
             # PVC -> PV edges
@@ -395,7 +433,7 @@ def k8s_list(
                 "claimRef": (getattr(getattr(spec, "claim_ref", None), "namespace", None), getattr(getattr(spec, "claim_ref", None), "name", None)) if spec and getattr(spec, "claim_ref", None) else None,
             }
         items = [_pv_item(v) for v in pvs]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
 
         if hints:
             for v in pvs:
@@ -428,8 +466,7 @@ def k8s_list(
                 "allowVolumeExpansion": getattr(sc, "allow_volume_expansion", None) if hasattr(sc, "allow_volume_expansion") else getattr(sc, "allowVolumeExpansion", None),
             }
         items = [_sc_item(sc) for sc in scs]
-        cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
-
+        cont = getattr(getattr(resp, "metadata", None), "continue", None)
     else:
         return {"error": f"unsupported kind: {kind}"}
 
@@ -601,3 +638,21 @@ def k8s_get(
         }
     else:
         return {"error": f"unsupported kind: {kind}"}
+# Replace the body of oke_service_endpoints as per instructions
+def oke_service_endpoints(ctx: Context, cluster_id: str, service: str, namespace: str, endpoint: Optional[str] = None, auth: Optional[str] = None) -> Dict:
+    api = get_core_v1_client(cluster_id, endpoint=endpoint, auth=auth)
+    try:
+        s = api.read_namespaced_service(name=service, namespace=namespace)
+        return _service_public_endpoints(api, s)
+    except k8s_client.exceptions.ApiException as e:
+        if e.status == 404:
+            try:
+                svcs = api.list_namespaced_service(namespace=namespace, limit=200).items
+                suggestions = [{"name": x.metadata.name, "type": getattr(getattr(x, "spec", None), "type", None)} for x in svcs]
+            except Exception:
+                suggestions = []
+            return {
+                "error": f"service '{service}' not found in '{namespace}'",
+                "suggestions": suggestions,
+            }
+        raise
