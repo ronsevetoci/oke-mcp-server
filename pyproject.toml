@@ -1,6 +1,6 @@
 [project]
 name = "oke-mcp-server"
-version = "0.2.0"
+version = "0.1.2"
 description = "Minimal MCP server for managing Oracle OKE & Kubernetes, optimized for LLMs."
 readme = "README.md"
 requires-python = ">=3.9"
