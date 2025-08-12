@@ -638,6 +638,93 @@ def k8s_get(
         }
     else:
         return {"error": f"unsupported kind: {kind}"}
+# Inserted by instruction: new tool function for pod logs
+def oke_get_pod_logs(
+    ctx: Context,
+    cluster_id: str,
+    namespace: str,
+    pod: str,
+    container: Optional[str] = None,
+    tail_lines: int = 200,
+    since_seconds: Optional[int] = None,
+    previous: Optional[bool] = None,
+    timestamps: Optional[bool] = False,
+    endpoint: Optional[str] = None,
+    auth: Optional[str] = None,
+) -> Dict:
+    """
+    Fetch logs from a given pod (optionally a specific container) in an OKE cluster.
+    Supports tailing and timestamped output. Returns a JSON object with the logs string.
+    """
+    # Cap tail_lines to a reasonable limit to avoid flooding the client
+    try:
+        if tail_lines is not None:
+            tail_lines = max(1, min(int(tail_lines), 5000))
+    except Exception:
+        tail_lines = 200
+
+    api = get_core_v1_client(cluster_id, endpoint=endpoint, auth=auth)
+
+    # Build kwargs only with values provided (the Kubernetes client may error on None)
+    kwargs = {}
+    if container:
+        kwargs["container"] = container
+    if tail_lines is not None:
+        kwargs["tail_lines"] = tail_lines
+    if since_seconds is not None:
+        kwargs["since_seconds"] = int(since_seconds)
+    if previous is not None:
+        kwargs["previous"] = bool(previous)
+    if timestamps:
+        kwargs["timestamps"] = bool(timestamps)
+
+    try:
+        logs = api.read_namespaced_pod_log(
+            name=pod,
+            namespace=namespace,
+            **kwargs,
+        )
+        # Truncate very large logs to keep responses snappy
+        truncated = False
+        if isinstance(logs, str) and len(logs) > 200_000:
+            logs = logs[-200_000:]
+            truncated = True
+
+        return {
+            "namespace": namespace,
+            "pod": pod,
+            "container": container,
+            "tail_lines": tail_lines,
+            "timestamps": bool(timestamps),
+            "truncated": truncated,
+            "logs": logs,
+        }
+    except k8s_client.exceptions.ApiException as e:
+        if e.status == 404:
+            # Provide helpful suggestions when the pod isn't found
+            suggestions = []
+            try:
+                pods = api.list_namespaced_pod(namespace=namespace, limit=200).items
+                suggestions = [
+                    {
+                        "name": getattr(p.metadata, "name", ""),
+                        "containers": [c.name for c in (getattr(getattr(p, "spec", None), "containers", []) or [])],
+                    }
+                    for p in pods
+                ]
+            except Exception:
+                pass
+            return {
+                "error": f"pod '{pod}' not found in namespace '{namespace}'",
+                "suggestions": suggestions,
+            }
+        return {
+            "error": f"failed to fetch logs: {getattr(e, 'reason', str(e))}",
+            "status": getattr(e, 'status', None),
+            "body": getattr(e, 'body', None),
+        }
+    except Exception as ex:
+        return {"error": f"unexpected error fetching logs: {ex!r}"}
 # Replace the body of oke_service_endpoints as per instructions
 def oke_service_endpoints(ctx: Context, cluster_id: str, service: str, namespace: str, endpoint: Optional[str] = None, auth: Optional[str] = None) -> Dict:
     api = get_core_v1_client(cluster_id, endpoint=endpoint, auth=auth)

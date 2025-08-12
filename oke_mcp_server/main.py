@@ -56,6 +56,7 @@ def main() -> None:
     mcp.tool(name="k8s_get", description="Get a single Kubernetes resource by kind/name (trimmed).")(
         k8s_tools.k8s_get
     )
+    mcp.tool(name="oke_get_pod_logs", description="Get Kubernetes pod logs (optionally container-specific, supports tail/timestamps/previous).")(k8s_tools.oke_get_pod_logs)
 
     mcp.tool(name="oke_list_clusters", description="List OKE clusters in a compartment (trimmed).")(
         oke_cluster_tools.oke_list_clusters
