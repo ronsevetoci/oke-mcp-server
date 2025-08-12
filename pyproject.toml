@@ -1,43 +1,67 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "oke-mcp-server"
-version = "0.1.1"
-description = "MCP server for Oracle OKE (Oracle Container Engine for Kubernetes)"
+version = "0.2.0"
+description = "Minimal MCP server for managing Oracle OKE & Kubernetes, optimized for LLMs."
 readme = "README.md"
+requires-python = ">=3.9"
 authors = [{ name = "Ron Sevet" }]
-license = { file = "LICENSE" }
-requires-python = ">=3.10"
-dependencies = [
-  "oci==2.157.1",
-  "kubernetes>=29.0.0",
-  "PyYAML>=6.0.1",
-  "mcp>=0.2.0",
-]
-
+license = { text = "Apache-2.0" }
+keywords = ["MCP", "Oracle", "OKE", "Kubernetes", "LLM", "DevTools"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "License :: OSI Approved :: Apache Software License",
+  "Environment :: Console",
   "Intended Audience :: Developers",
-  "Topic :: System :: Monitoring",
-  "Topic :: System :: Systems Administration",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 
-urls = { "Homepage" = "https://github.com/ronsevetoci/oke-mcp-server" }
+# Core runtime deps kept lean for uvx and MCP clients
+dependencies = [
+  "mcp>=1.1.0",
+  "mcp[cli]>=1.1.0",
+  "fastmcp>=0.4.0",
+  "oci>=2.157.1",
+  "kubernetes>=28.1.0",
+  "pyyaml>=6.0.1",
+]
+
+[project.optional-dependencies]
+# Install with: pip install .[dev]
+# or via uv: uv pip install .[dev]
+dev = [
+  "ruff>=0.5.0",
+  "mypy>=1.10.0",
+  "pytest>=8.2.0",
+  "build>=1.2.1",
+  "twine>=5.1.1",
+  "uv>=0.4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ronsevetoci/oke-mcp-server"
+Issues = "https://github.com/ronsevetoci/oke-mcp-server/issues"
+Source = "https://github.com/ronsevetoci/oke-mcp-server"
 
 [project.scripts]
-oke-mcp-server = "main:main"
+oke-mcp-server = "oke_mcp_server.main:main"
 
-# === setuptools config ===
-# Top-level single-file modules:
 [tool.setuptools]
-py-modules = ["main", "oci_auth", "oke_auth", "config_store"]
+include-package-data = true
 
-# Also ship the handlers package (directory)
 [tool.setuptools.packages.find]
-include = ["handlers*"]
-namespaces = false
+where = ["."]
+include = ["oke_mcp_server*"]
+
+# If you later add non-Python data (templates, etc.), list them here
+# [tool.setuptools.package-data]
+# "oke_mcp_server" = ["templates/*.yaml", "data/*.json"]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

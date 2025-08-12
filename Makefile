@@ -1,77 +1,23 @@
-# OKE MCP Server — Unified Makefile
-# Usage:
-#   make setup        # create venv (if missing) & install deps (add DEV=1 for dev deps)
-#   make run          # run the MCP server directly (stdio JSON-RPC)
-#   make run-stdio    # run via MCP CLI stdio transport (recommended for testing)
-#   make test         # run pytest (if tests exist)
-#   make clean        # remove venv and caches
-#   make dev-inspect  # (dev) open MCP Inspector connected to this server
-#   make package      # build and upload package to PyPI
-#   make help         # list targets
+.PHONY: dev run tools build dist publish clean
 
-SHELL := /bin/bash
-.SHELLFLAGS := -eu -o pipefail -c
-VENV ?= .venv
-PYTHON := $(VENV)/bin/python
-PIP := $(PYTHON) -m pip
+PY ?= python3
 
-.PHONY: help setup run run-stdio test clean dev-inspect format lint typecheck package
+dev:
+	uvx --from oke-mcp-server oke-mcp-server --transport stdio
 
-help:
-	@echo "Targets:"
-	@echo "  setup         Create venv & install dependencies (add DEV=1 for dev deps)"
-	@echo "  run           Run MCP server directly (stdio)"
-	@echo "  run-stdio     Run via MCP CLI stdio transport (recommended)"
-	@echo "  test          Run pytest (if tests folder exists)"
-	@echo "  clean         Remove venv and caches"
-	@echo "  dev-inspect   Open MCP Inspector connected to this server (dev only)"
-	@echo "  package       Build and upload package to PyPI"
-	@echo "  format        Run Black + Ruff (fix)"
-	@echo "  lint          Run Ruff checks"
-	@echo "  typecheck     Run mypy type checks"
+run:
+	$(PY) -m oke_mcp_server.main --transport stdio
 
-setup:
-	@if [ ! -d "$(VENV)" ]; then \
-		python3 -m venv $(VENV); \
-	fi
-	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
-	@if [ "${DEV}" = "1" ]; then \
-		$(PIP) install -r requirements-dev.txt; \
-	fi
+tools:
+	$(PY) -m oke_mcp_server.main --print-tools
 
-run: setup
-	MCP_LOG_LEVEL=DEBUG $(PYTHON) main.py
+build:
+	$(PY) -m build
 
-run-stdio: setup
-	MCP_LOG_LEVEL=DEBUG uvx mcp -t stdio main.py
+dist: clean build
 
-test: setup
-	@if [ -d tests ]; then \
-		$(PYTHON) -m pytest -q; \
-	else \
-		echo "(skipped) no tests directory"; \
-	fi
-
-format: setup
-	$(PYTHON) -m black .
-	$(PYTHON) -m ruff check --fix .
-
-lint: setup
-	$(PYTHON) -m ruff check .
-
-typecheck: setup
-	$(PYTHON) -m mypy --ignore-missing-imports .
+publish:
+	$(PY) -m twine upload dist/*
 
 clean:
-	rm -rf $(VENV) __pycache__ .pytest_cache **/__pycache__ .ruff_cache .mypy_cache dist build *.egg-info
-
-package: setup
-	$(PYTHON) -m build
-	$(PYTHON) -m twine upload dist/*
-
-# --- Dev-only helpers ---
-INSPECTOR_CMD ?= uvx mcp dev ./main.py
-
-dev-inspect: setup
-	MCP_LOG_LEVEL=DEBUG $(INSPECTOR_CMD)
+	rm -rf dist build *.egg-info
