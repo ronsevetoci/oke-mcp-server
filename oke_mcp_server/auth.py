@@ -116,20 +116,43 @@ def get_core_v1_client(
     auth = _resolve_auth(auth)
     ce = get_container_engine_client(auth=auth)
 
-    # create_kubeconfig returns the config text
+    # Build kwargs for create_kubeconfig (OCI SDK expects 'kube_endpoint', not 'endpoint')
     kwargs: dict = {}
     if endpoint:
-        kwargs["endpoint"] = endpoint  # PUBLIC/PRIVATE
+        # Accept "PUBLIC"/"PRIVATE" (or full enum values) and pass as kube_endpoint
+        kwargs["kube_endpoint"] = endpoint
 
-    # returns oci.container_engine.models.Kubeconfig
-    resp = ce.create_kubeconfig(
-        cluster_id=cluster_id,
-        **kwargs,
-    )
+    # Optional short-lived token expiration in seconds (defaults to SDK default)
+    exp_env = os.environ.get("OKE_KUBECONFIG_EXP_SECONDS")
+    if exp_env:
+        try:
+            kwargs["expiration"] = int(exp_env)
+        except ValueError:
+            log.warning("Ignoring non-integer OKE_KUBECONFIG_EXP_SECONDS=%s", exp_env)
+
+    # Optional token version (e.g., "2.0.0") if callers want to pin
+    token_ver = os.environ.get("OKE_KUBECONFIG_TOKEN_VERSION")
+    if token_ver:
+        kwargs["token_version"] = token_ver
+
+    # Call CE to get kubeconfig content (returns oci.container_engine.models.Kubeconfig)
+    resp = ce.create_kubeconfig(cluster_id=cluster_id, **kwargs)
     kubeconfig_text = resp.data.content
 
-    # Load from string
-    k8s_config.load_kube_config_from_dict(_yaml_to_dict(kubeconfig_text))
+    # Load from string and ensure a current-context is present
+    cfg_dict = _yaml_to_dict(kubeconfig_text)
+    try:
+        if not cfg_dict.get("current-context"):
+            contexts = cfg_dict.get("contexts") or []
+            if contexts:
+                name = contexts[0].get("name") if isinstance(contexts[0], dict) else None
+                if name:
+                    cfg_dict["current-context"] = name
+    except Exception:
+        # If kubeconfig already valid, proceed
+        pass
+
+    k8s_config.load_kube_config_from_dict(cfg_dict)
     return k8s_client.CoreV1Api()
 
 

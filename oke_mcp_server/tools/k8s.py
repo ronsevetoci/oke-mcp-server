@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Optional, Dict, List
 from fastmcp import Context
 from kubernetes import client as k8s_client
+from kubernetes.client import exceptions as k8s_exceptions
 from ..auth import get_core_v1_client
 
 # Helpers
@@ -654,52 +655,76 @@ def oke_get_pod_logs(
 ) -> Dict:
     """
     Fetch logs from a given pod (optionally a specific container) in an OKE cluster.
-    Supports tailing and timestamped output. Returns a JSON object with the logs string.
+    Compatible with the original v0.1.0 behavior; adds explicit timeouts to avoid hangs.
     """
-    # Cap tail_lines to a reasonable limit to avoid flooding the client
+    # Required params validation
+    if not cluster_id:
+        raise ValueError("Missing cluster_id/clusterId")
+    if not namespace:
+        raise ValueError("Missing namespace")
+    if not pod:
+        raise ValueError("Missing pod/name")
+
+    # Normalize numeric/bool inputs like v0.1.0
     try:
-        if tail_lines is not None:
-            tail_lines = max(1, min(int(tail_lines), 5000))
+        _tail = int(tail_lines) if tail_lines is not None else 200
     except Exception:
-        tail_lines = 200
+        _tail = 200
+    try:
+        _since = int(since_seconds) if since_seconds is not None else None
+    except Exception:
+        _since = None
+    _prev = bool(previous) if previous is not None else None
+    _ts = bool(timestamps) if timestamps is not None else False
+
+    # Cap tail to avoid flooding
+    if _tail is not None:
+        _tail = max(1, min(_tail, 5000))
 
     api = get_core_v1_client(cluster_id, endpoint=endpoint, auth=auth)
 
-    # Build kwargs only with values provided (the Kubernetes client may error on None)
+    # Build kwargs only with values provided (client may error on None)
     kwargs = {}
     if container:
         kwargs["container"] = container
-    if tail_lines is not None:
-        kwargs["tail_lines"] = tail_lines
-    if since_seconds is not None:
-        kwargs["since_seconds"] = int(since_seconds)
-    if previous is not None:
-        kwargs["previous"] = bool(previous)
-    if timestamps:
-        kwargs["timestamps"] = bool(timestamps)
+    if _tail is not None:
+        kwargs["tail_lines"] = _tail
+    if _since is not None:
+        kwargs["since_seconds"] = _since
+    if _prev is not None:
+        kwargs["previous"] = _prev
+    if _ts:
+        kwargs["timestamps"] = _ts
 
     try:
-        logs = api.read_namespaced_pod_log(
+        text = api.read_namespaced_pod_log(
             name=pod,
             namespace=namespace,
+            _preload_content=True,
+            _request_timeout=(10, 65),  # (connect, read) seconds to avoid hangs
+            pretty="true",
             **kwargs,
         )
+
         # Truncate very large logs to keep responses snappy
         truncated = False
-        if isinstance(logs, str) and len(logs) > 200_000:
-            logs = logs[-200_000:]
+        if isinstance(text, str) and len(text) > 200_000:
+            text = text[-200_000:]
             truncated = True
 
         return {
             "namespace": namespace,
             "pod": pod,
             "container": container,
-            "tail_lines": tail_lines,
-            "timestamps": bool(timestamps),
+            "tail_lines": _tail,
+            "since_seconds": _since,
+            "previous": _prev,
+            "timestamps": _ts,
             "truncated": truncated,
-            "logs": logs,
+            "log": text or "",
         }
-    except k8s_client.exceptions.ApiException as e:
+    except k8s_exceptions.ApiException as e:
+        body = getattr(e, "body", "") or ""
         if e.status == 404:
             # Provide helpful suggestions when the pod isn't found
             suggestions = []
@@ -716,15 +741,24 @@ def oke_get_pod_logs(
                 pass
             return {
                 "error": f"pod '{pod}' not found in namespace '{namespace}'",
+                "status": 404,
                 "suggestions": suggestions,
             }
-        return {
-            "error": f"failed to fetch logs: {getattr(e, 'reason', str(e))}",
-            "status": getattr(e, 'status', None),
-            "body": getattr(e, 'body', None),
-        }
+        # kubelet 10250 timeout pattern: surface clearer hint
+        if e.status in (500, 504) and ("10250" in body or "containerLogs" in body):
+            return {
+                "error": "failed to fetch logs: kubelet timeout",
+                "status": e.status,
+                "body": body,
+                "hints": [
+                    "This comes from apiserver proxying to kubelet:10250.",
+                    "If using STS security_token, run the auth_refresh tool and retry.",
+                    "Check OKE control-plane reachability to nodes (NSGs / private endpoint).",
+                ],
+            }
+        return {"error": "failed to fetch logs", "status": e.status, "body": body}
     except Exception as ex:
-        return {"error": f"unexpected error fetching logs: {ex!r}"}
+        return {"error": f"failed to fetch logs: {ex!s}"}
 # Replace the body of oke_service_endpoints as per instructions
 def oke_service_endpoints(ctx: Context, cluster_id: str, service: str, namespace: str, endpoint: Optional[str] = None, auth: Optional[str] = None) -> Dict:
     api = get_core_v1_client(cluster_id, endpoint=endpoint, auth=auth)
