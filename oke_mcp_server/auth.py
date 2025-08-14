@@ -1,7 +1,9 @@
 from __future__ import annotations
 import os
 from functools import lru_cache
+from typing import Optional, Tuple
 import oci
+from oci import auth as oci_auth
 from kubernetes import client as k8s_client, config as k8s_config
 from .config import settings
 
@@ -20,9 +22,20 @@ def _resolve_auth(auth: str | None) -> str | None:
         os.environ["OCI_CLI_AUTH"] = auth
     return auth
 
+def _infer_region(config: dict) -> str:
+    # Prefer explicit settings/env, else config file
+    return (
+        settings.oci_region
+        or os.environ.get("OCI_REGION")
+        or config.get("region")
+        or os.environ.get("OCI_CLI_REGION")
+        or ""
+    )
 
 def _load_oci_config() -> dict:
-    """Load OCI config honoring env and settings; expand ~ in paths."""
+    """Load OCI config honoring env and settings; expand ~ in paths.
+    Returns an empty dict if no file is present; callers decide how to auth.
+    """
     cfg_file = (
         settings.oci_config_file
         or os.environ.get("OCI_CONFIG_FILE")
@@ -36,8 +49,14 @@ def _load_oci_config() -> dict:
         or os.environ.get("OCI_CLI_PROFILE")
         or oci.config.DEFAULT_PROFILE
     )
-    log.debug(f"Loading OCI config from {cfg_file} with profile {profile}")
-    return oci.config.from_file(cfg_file, profile_name=profile)
+    try:
+        if os.path.exists(cfg_file):
+            log.debug(f"Loading OCI config from {cfg_file} with profile {profile}")
+            return oci.config.from_file(cfg_file, profile_name=profile)
+    except Exception as e:
+        log.warning(f"Failed to load OCI config file {cfg_file}: {e}")
+    # Fall back to minimal dict; region might be injected later
+    return {}
 
 # --- SecurityTokenSigner helper -------------------------------------------
 from oci.signer import load_private_key_from_file as _load_privkey
@@ -69,22 +88,66 @@ def _build_security_token_signer_from_config(config: dict):
     return SecurityTokenSigner(token, private_key)
 
 
+def _try_instance_principals() -> Tuple[Optional[dict], Optional[object]]:
+    try:
+        signer = oci_auth.signers.InstancePrincipalsSecurityTokenSigner()
+        region = os.environ.get("OCI_REGION") or getattr(signer, "region", None)
+        cfg = {"region": region} if region else {}
+        return cfg, signer
+    except Exception:
+        return None, None
+
+def _try_resource_principals() -> Tuple[Optional[dict], Optional[object]]:
+    if not os.environ.get("OCI_RESOURCE_PRINCIPAL_VERSION"):
+        return None, None
+    try:
+        signer = oci_auth.signers.get_resource_principals_signer()
+        region = os.environ.get("OCI_REGION") or getattr(signer, "region", None)
+        cfg = {"region": region} if region else {}
+        return cfg, signer
+    except Exception as e:
+        log.warning(f"Resource Principals signer not available: {e}")
+        return None, None
+
+
 # --- OCI clients -----------------------------------------------------------
 
 @lru_cache(maxsize=8)
 def get_container_engine_client(auth: str | None = None) -> oci.container_engine.ContainerEngineClient:
     """
-    Return ContainerEngineClient. If `security_token` auth is active (explicitly
-    or implied by config), build a SecurityTokenSigner so the SDK doesn't
-    require `user` in config.
+    Return ContainerEngineClient using one of:
+    - Resource Principals (if OCI_RESOURCE_PRINCIPAL_VERSION is set)
+    - Instance Principals (if auth == "instance_principals")
+    - Security Token (if auth == "security_token" or token/delegation present in config)
+    - Config file user keys (default)
     """
     auth = _resolve_auth(auth)
     config = _load_oci_config()
 
+    # Resource Principals first (common in OKE/Functions/Serverless)
+    cfg_rp, signer_rp = _try_resource_principals()
+    if signer_rp is not None:
+        region = _infer_region(config) or _infer_region(cfg_rp or {})
+        if not region:
+            raise RuntimeError("Region is required for Resource Principals. Set OCI_REGION.")
+        return oci.container_engine.ContainerEngineClient({"region": region}, signer=signer_rp)
+
+    # Instance Principals when explicitly requested
+    if auth and auth.lower() in {"instance_principals", "instance-principals", "ip"}:
+        cfg_ip, signer_ip = _try_instance_principals()
+        if signer_ip is None:
+            raise RuntimeError("Failed to initialize Instance Principals signer")
+        region = _infer_region(config) or _infer_region(cfg_ip or {})
+        if not region:
+            raise RuntimeError("Region is required for Instance Principals. Set OCI_REGION.")
+        return oci.container_engine.ContainerEngineClient({"region": region}, signer=signer_ip)
+
+    # Security token via CLI SSO or delegation tokens
     signer = None
     try:
-        needs_token = (auth and auth.lower() == "security_token") or \
-                      bool(config.get("security_token_file") or config.get("delegation_token_file"))
+        needs_token = (auth and auth.lower() == "security_token") or bool(
+            config.get("security_token_file") or config.get("delegation_token_file")
+        )
         if needs_token:
             log.debug("Using explicit SecurityTokenSigner from token & private key")
             signer = _build_security_token_signer_from_config(config)
@@ -93,9 +156,14 @@ def get_container_engine_client(auth: str | None = None) -> oci.container_engine
         raise RuntimeError(f"SecurityTokenSigner init failed: {e}")
 
     if signer is not None:
-        return oci.container_engine.ContainerEngineClient(config, signer=signer)
+        region = _infer_region(config)
+        if not region:
+            raise RuntimeError("Region is required in config/env for security_token auth. Set OCI_REGION or add region to OCI config.")
+        return oci.container_engine.ContainerEngineClient({"region": region}, signer=signer)
 
-    log.debug("Using standard config authentication (no signer)")
+    # Default: user principal from config file
+    if not config:
+        raise RuntimeError("No OCI config found and no principal signer available. Provide ~/.oci/config or set OCI_RESOURCE_PRINCIPAL_VERSION/instance principals.")
     return oci.container_engine.ContainerEngineClient(config)
 
 
@@ -152,14 +220,24 @@ def get_core_v1_client(
         # If kubeconfig already valid, proceed
         pass
 
-    k8s_config.load_kube_config_from_dict(cfg_dict)
+    k8s_config.load_kube_config_from_dict(cfg_dict, persist_config=False)
     return k8s_client.CoreV1Api()
 
 
 def _yaml_to_dict(text: str) -> dict:
-    import yaml
-
+    try:
+        import yaml  # type: ignore
+    except Exception as e:
+        raise RuntimeError(f"PyYAML is required to parse kubeconfig: {e}")
     data = yaml.safe_load(text)
     if not isinstance(data, dict):
         raise ValueError("Invalid kubeconfig content")
     return data
+
+
+def invalidate_auth_cache() -> None:
+    """Clear cached OCI clients (use after token rotation)."""
+    try:
+        get_container_engine_client.cache_clear()
+    except Exception:
+        pass

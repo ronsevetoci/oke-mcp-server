@@ -1,195 +1,207 @@
 # OKE MCP Server
 
-## Overview
-
-The **Oracle Container Engine for Kubernetes (OKE) Model Context Protocol (MCP) Server** enables Large Language Models (LLMs) and MCP-aware clients to inspect, troubleshoot, and interact with OKE clusters programmatically. Designed for OCI customers, DevOps teams, and developers, this tool streamlines Kubernetes diagnostics and management through MCP.
+Model Context Protocol (MCP) server for **Oracle Container Engine for Kubernetes (OKE)**. It lets MCP‑aware chat clients (e.g. Claude Desktop, VS Code Agent, custom CLI) **inspect, query and troubleshoot** your OKE clusters through a small set of safe, composable tools.
 
 ---
 
-## Quickstart (with uvx)
+## ✨ Highlights
 
-The easiest way to run the MCP server is using [uv](https://github.com/astral-sh/uv) and its `uvx` launcher, which requires no local virtual environment or manual dependency installation.
+- **Lean, LLM‑friendly APIs** – small, consistent payloads (`{items,next,error}` / `{item,error}`) with optional `verbose` and `hints`.
+- **OCI auth that “just works”** – supports **security token** (local dev) and **API keys**.
+- **No venv required** – run with **uvx**: `uvx oke-mcp-server --transport stdio`.
+- **Token rotation** – refresh without restart using the `auth_refresh` tool.
+- **Production‑ready ergonomics** – clear errors, pagination, predictable shapes.
+
+---
+
+## Requirements
+
+- **Python** 3.10+ (3.11+ recommended)
+- **uv** (recommended): <https://github.com/astral-sh/uv>
+- **OCI credentials** configured locally (see below)
+
+Optional:
+- MCP host/client (Claude Desktop, VS Code Agent Mode, etc.)
+
+---
+
+## Install & Run (recommended)
+
+Run the published package with uvx:
 
 ```bash
-# Run directly from source (useful during development)
-uvx --from . oke-mcp-server --transport stdio
-
-# Or run the published package (after publishing to PyPI)
 uvx oke-mcp-server --transport stdio
 ```
 
-### Initializing the JSON-RPC Session
+Or run a specific version:
 
-After starting the server, initialize it by sending the following JSON-RPC commands:
+```bash
+uvx --from oke-mcp-server==0.2.* oke-mcp-server --transport stdio
+```
+
+> The server speaks MCP over **stdio**. Most MCP hosts handle initialization automatically. For raw testing you can still send JSON‑RPC (see “Quick JSON‑RPC test”).
+
+---
+
+## Configure Authentication
+
+### Option A — Security Token (best for local dev)
+
+1. Sign in via the OCI Console/CLI to obtain a **security token**.
+2. In your `~/.oci/config` profile (e.g. `DEFAULT`) include:
+   ```ini
+   [DEFAULT]
+   tenancy=ocid1.tenancy.oc1..aaaa...
+   region=eu-frankfurt-1
+   user=ocid1.user.oc1..aaaa...          # usually present; not used by STS signer
+   key_file=/path/to/your/api_key.pem     # keep if you also use API key flows
+   fingerprint=XX:XX:...                  # same as above
+   security_token_file=/path/to/token     # REQUIRED for STS
+   ```
+3. Export (or set in your MCP host env):
+   ```bash
+   export OCI_CLI_AUTH=security_token
+   ```
+4. (When the token expires) call the MCP tool:
+   ```json
+   {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"auth_refresh","arguments":{}}}
+   ```
+
+### Option B — API Key
+
+Use your standard `~/.oci/config` profile with `user`, `key_file`, `fingerprint`, `tenancy`, `region`. Do **not** set `OCI_CLI_AUTH=security_token`.
+
+> The server also honors `OKE_COMPARTMENT_ID` and `OKE_CLUSTER_ID` environment variables as defaults.
+
+---
+
+## Using with an MCP Host
+
+### Claude Desktop (example)
+
+Settings → MCP Servers → Add:
+
+```json
+{
+  "name": "oke",
+  "command": "uvx",
+  "args": ["oke-mcp-server", "--transport", "stdio"],
+  "env": {
+    "OCI_CLI_AUTH": "security_token",
+    "OKE_COMPARTMENT_ID": "ocid1.compartment.oc1..aaaa...",
+    "OKE_CLUSTER_ID": "ocid1.cluster.oc1.eu-frankfurt-1.aaaa..."
+  }
+}
+```
+
+That’s it—Claude will list the tools and can call them during chat.
+
+---
+
+## Quick JSON‑RPC test (manual)
+
+Start the server:
+
+```bash
+uvx oke-mcp-server --transport stdio
+```
+
+Then send:
 
 ```json
 {"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"manual","version":"0.0.0"}}}
 {"jsonrpc":"2.0","method":"notifications/initialized","params":{}}
+{"jsonrpc":"2.0","id":1,"method":"tools/list"}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"meta_health","arguments":{}}}
 ```
 
 ---
 
-## Environment Setup
+## Tools (stable set)
 
-Before running the MCP server, ensure you have:
+All list tools return:
 
-- **Python 3.10+** (3.11 recommended). Verify with:
+```json
+{ "items": [...], "next": "<token|null>", "error": null, "meta": { ... } }
+```
 
-  ```bash
-  python3 --version
-  ```
+Single‑item tools return:
 
-- **OCI Credentials** configured for authentication:
+```json
+{ "item": { ... }, "error": null, "meta": { ... } }
+```
 
-  - **Security Token Authentication** (recommended for local development):  
-    Set `OCI_CLI_AUTH=security_token` and authenticate via OCI CLI or Console to refresh tokens.
+Common inputs:
+- `limit` (default 20), `continue_token` (pagination)
+- `verbose: bool` (include extra details)  
+- `hints: bool` (include lightweight graph hints where applicable)
+- `auth: "security_token" | null` (override; otherwise server uses env/defaults)
 
-  - **API Key Authentication**:  
-    Configure your API keys in `~/.oci/config` under the `DEFAULT` or a named profile.
+### Meta / Config
+- **meta_health** → `{server, version, defaults, effective}`
+- **meta_env** → redacted env snapshot for diagnostics
+- **auth_refresh** → re‑loads auth (use after rotating security token)
+- **config_get_effective_defaults / config_set_defaults** → manage fallback OCIDs
 
-- **MCP CLI (`mcp`)** installed:
+### OKE / Kubernetes
+- **k8s_list** — list Pods, Services, Namespaces, Nodes, Deployments, ReplicaSets, Endpoints, EndpointSlices, Ingress, Gateway, HTTPRoute, PVC, PV, StorageClass
+- **k8s_get** — get a single resource by kind/namespace/name
+- **oke_get_pod_logs** — stream recent logs from a container (supports `tail_lines`, `since_seconds`, `previous`, `timestamps`)
+- **oke_list_clusters / oke_get_cluster** — cluster discovery and details (OCI)
 
-  ```bash
-  pipx install mcp  # or: pip install mcp
-  ```
-
-> **Note:** If using security token authentication locally, your existing `kubectl` setup likely works. The server patches kubeconfig exec arguments with `--auth security_token` for seamless integration.
+> For public logs on OKE, ensure worker nodes allow the API->kubelet path: **TCP/10250** from the control‑plane CIDR/NSG. Timeouts when calling `read_namespaced_pod_log` typically mean this network path is blocked.
 
 ---
 
-## New Tool Highlights
+## Troubleshooting
 
-The MCP server now supports additional CLI flags and tools for enhanced usability:
-
-- `--set-defaults-compartment <compartment_ocid>`  
-  Sets the default compartment OCID, avoiding repeated specification.
-
-- `--set-defaults-cluster <cluster_ocid>`  
-  Sets the default cluster OCID.
-
-- `--print-tools`  
-  Prints a list of available MCP tools and their descriptions.
-
-### New MCP Tools
-
-- **meta_env**  
-  Provides metadata about the server environment and configuration for diagnostics and introspection.
-
-- **auth_refresh**  
-  Refreshes authentication tokens on-demand without restarting the server, especially useful with security token authentication.
+| Symptom | Likely Cause | Fix |
+|---|---|---|
+| `{'user':'missing'}` from OCI SDK | No valid signer or profile | Set `OCI_CLI_AUTH=security_token` **or** ensure `~/.oci/config` has `user/key_file/fingerprint` |
+| TLS bundle not found | Wrong Python cert path | Ensure `certifi` is installed in the environment running the server |
+| Logs 500 / i/o timeout to `:10250` | Control‑plane → node kubelet blocked | Open **TCP/10250** from API endpoint CIDR in Security List / NSG |
+| Tool says `cluster_id required` | No defaults present | Set `OKE_CLUSTER_ID` env or call `config_set_defaults` |
 
 ---
 
 ## Project Structure
 
-- `main.py` — MCP server entry point  
-- `oke_auth.py` — OKE authentication handler  
-- `oci_auth.py` — OCI authentication handler  
-- `handlers/oke.py` — Core OKE logic and API interactions  
-- `config_store.py` — Configuration management  
-- `auth_refresh.py` — Tool for refreshing authentication tokens without restart  
-- `meta_env.py` — Tool providing environment metadata and diagnostics  
-- `requirements.txt` — Runtime dependencies  
-- `Makefile` — Build and run commands  
-
----
-
-## Testing Your Release
-
-After building and installing your package, run the server and test with:
-
-```bash
-uvx oke-mcp-server --transport stdio
 ```
-
-Example JSON-RPC request to list pods in the default namespace:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/call",
-  "params": {
-    "name": "oke_list_pods",
-    "arguments": {
-      "namespace": "default"
-    }
-  }
-}
+oke_mcp_server/
+  __init__.py
+  main.py
+  auth.py
+  config_store.py
+  tools/
+    k8s.py
+    oke_cluster.py
+pyproject.toml
+Makefile
 ```
 
 ---
 
-## Releasing a New Version
+## Release
 
-1. Build and test locally:
-
+1. Bump version in `pyproject.toml`.
+2. Build & test:
    ```bash
    python -m pip install --upgrade build twine
    python -m build
-   pip install dist/oke_mcp_server-*.whl
-   uvx oke-mcp-server --transport stdio
+   uvx --from dist/*.whl oke-mcp-server --transport stdio
    ```
-
-2. Publish to PyPI (optional):
-
+3. Publish:
    ```bash
    export TWINE_USERNAME="__token__"
-   export TWINE_PASSWORD="pypi-XXXXXXXXXXXXXXXXX"
+   export TWINE_PASSWORD="pypi-***"
    twine upload dist/*
    ```
-
-3. Tag and push release:
-
+4. Tag and push:
    ```bash
-   git tag v0.1.0
-   git push origin v0.1.0
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
    ```
 
-4. Use GitHub Actions to automate builds and publishing on tag.
-
 ---
 
-## Common Pitfalls
-
-- **401 Unauthorized when fetching pod logs:**  
-  Ensure worker nodes allow inbound access on port **10250/tcp** from the Kubernetes API endpoint CIDR via NSG or Security List.
-
-- **“Invalid kubeconfig … mapping/str” error:**  
-  Persistent errors may indicate malformed kubeconfig. Share the first 200 characters of your kubeconfig in an issue for help.
-
-- **Security token authentication issues:**  
-  Confirm `OCI_CLI_AUTH=security_token` is set. The server patches kubeconfig exec arguments accordingly.
-
-- **Token expiration:**  
-  Use the `auth_refresh` tool to refresh tokens without restarting:
-
-  ```json
-  {
-    "jsonrpc": "2.0",
-    "id": 2,
-    "method": "tools/call",
-    "params": {
-      "name": "auth_refresh",
-      "arguments": {}
-    }
-  }
-  ```
-
----
-
-Thank you for using the OKE MCP Server. For issues or feature requests, please open an issue in the repository.
-
-**Example JSON-RPC calls:**
-
-List pods with security token auth:
-
-```json
-{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"k8s_list","arguments":{"cluster_id":"ocid1.cluster.oc1.eu-frankfurt-1....","kind":"Pod","namespace":"default","auth":"security_token","limit":20}}}
-```
-
-List pods without specifying auth explicitly:
-
-```json
-{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"k8s_list","arguments":{"cluster_id":"ocid1.cluster.oc1.eu-frankfurt-1....","kind":"Pod","namespace":"default","limit":20}}}
-```
+For issues or feature requests, please open an issue. PRs welcome!

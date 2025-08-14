@@ -254,7 +254,7 @@ def k8s_list(
                         if namespace else
                         api_gw.list_gateway_for_all_namespaces(limit=limit, _continue=continue_token))
                 gws = resp.items
-                cont = getattr(resp, "metadata", None)._continue if getattr(resp, "metadata", None) else None
+                cont = getattr(getattr(resp, "metadata", None), "continue", None)
             except Exception:
                 gws = []
                 cont = None
@@ -396,8 +396,6 @@ def k8s_list(
                     })
             # PVC -> Pod edges (pods mounting this claim)
             try:
-                # Limit workload to namespace when provided, else skip for safety
-                ns_list = [namespace] if namespace else []
                 if namespace:
                     pod_list = api.list_namespaced_pod(namespace=namespace, limit=200).items
                     for p in pvcs:
@@ -640,6 +638,7 @@ def k8s_get(
     else:
         return {"error": f"unsupported kind: {kind}"}
 # Inserted by instruction: new tool function for pod logs
+# Inserted by instruction: new tool function for pod logs
 def oke_get_pod_logs(
     ctx: Context,
     cluster_id: str,
@@ -777,3 +776,103 @@ def oke_service_endpoints(ctx: Context, cluster_id: str, service: str, namespace
                 "suggestions": suggestions,
             }
         raise
+
+# Tool: summarize public exposure of pods/services/ingress
+def k8s_public_exposure(
+    ctx: Context,
+    cluster_id: str,
+    namespace: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    auth: Optional[str] = None,
+    limit_per_ns: int = 200,
+) -> Dict:
+    """
+    Summarize publicly reachable workloads:
+      - Services of type LoadBalancer or NodePort
+      - Any Ingress objects that route to Services
+    Returns a compact, LLM-friendly structure:
+      {
+        "services": [ { service summary + external endpoints + selected pods + ingress hosts } ],
+        "ingresses": [ { name/ns/hosts/backend services } ]
+      }
+    """
+    api = get_core_v1_client(cluster_id, endpoint=endpoint, auth=auth)
+    net = k8s_client.NetworkingV1Api(api.api_client)
+
+    # --- Services: LoadBalancer / NodePort ---
+    if namespace:
+        svc_resp = api.list_namespaced_service(namespace=namespace, limit=limit_per_ns)
+    else:
+        svc_resp = api.list_service_for_all_namespaces(limit=limit_per_ns)
+    svcs = svc_resp.items or []
+
+    svc_items: List[Dict] = []
+    for s in svcs:
+        stype = (getattr(getattr(s, "spec", None), "type", None) or "").lower()
+        if stype not in ("loadbalancer", "nodeport"):
+            continue
+
+        info = _service_public_endpoints(api, s)
+        # Also collect any ingress hosts that point at this service
+        ns = info["service"]["namespace"]
+        name = info["service"]["name"]
+        ingress_hosts: List[str] = []
+        try:
+            if namespace:
+                ings = net.list_namespaced_ingress(namespace=ns, limit=limit_per_ns).items
+            else:
+                ings = net.list_ingress_for_all_namespaces(limit=limit_per_ns).items
+            for ing in ings:
+                spec = getattr(ing, "spec", None)
+                # default backend
+                def_b = getattr(spec, "default_backend", None)
+                svc = getattr(def_b, "service", None) if def_b else None
+                if svc and getattr(svc, "name", None) == name and getattr(ing.metadata, "namespace", None) == ns:
+                    # collect hosts if any
+                    for r in getattr(spec, "rules", []) or []:
+                        h = getattr(r, "host", None)
+                        if h:
+                            ingress_hosts.append(h)
+                # rules -> http -> paths -> backend.service
+                for r in getattr(spec, "rules", []) or []:
+                    http = getattr(r, "http", None)
+                    for p in (getattr(http, "paths", []) or []):
+                        b = getattr(p, "backend", None)
+                        svc = getattr(b, "service", None) if b else None
+                        if svc and getattr(svc, "name", None) == name and getattr(ing.metadata, "namespace", None) == ns:
+                            h = getattr(r, "host", None)
+                            if h:
+                                ingress_hosts.append(h)
+        except Exception:
+            pass
+
+        if ingress_hosts:
+            info["ingressHosts"] = sorted(list(set(ingress_hosts)))
+
+        svc_items.append(info)
+
+    # --- Ingresses Overview (lightweight) ---
+    ing_items: List[Dict] = []
+    try:
+        if namespace:
+            resp = net.list_namespaced_ingress(namespace=namespace, limit=limit_per_ns)
+        else:
+            resp = net.list_ingress_for_all_namespaces(limit=limit_per_ns)
+        for ing in getattr(resp, "items", []) or []:
+            spec = getattr(ing, "spec", None)
+            rules = getattr(spec, "rules", []) or []
+            hosts = [getattr(r, "host", None) for r in rules if getattr(r, "host", None)]
+            ing_items.append({
+                "name": getattr(getattr(ing, "metadata", None), "name", None),
+                "namespace": getattr(getattr(ing, "metadata", None), "namespace", None),
+                "class": getattr(spec, "ingress_class_name", None) if spec else None,
+                "hosts": hosts,
+                "rules": len(rules),
+            })
+    except Exception:
+        pass
+
+    return {
+        "services": svc_items,
+        "ingresses": ing_items,
+    }

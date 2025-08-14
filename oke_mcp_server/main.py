@@ -43,7 +43,14 @@ def main() -> None:
 
     mcp = FastMCP(
         name=SERVER_NAME,
-        instructions="Tools to manage Oracle OKE clusters & Kubernetes resources. Keep responses concise.",
+        version=__version__,
+        instructions=(
+            "This is a thin execution layer for managing Oracle OKE clusters and Kubernetes resources. "
+            "All reasoning, planning, and decision-making should be performed by the LLM. "
+            "Tools may return trimmed or summarized data for efficiency. "
+            "If a tool's output is large, you should paginate or filter results to avoid overwhelming the client. "
+            "Use tools to fetch and manipulate resources, but always keep responses concise and direct."
+        ),
     )
 
     # --- Explicit tool registration (decorator-free) ---
@@ -78,16 +85,31 @@ def main() -> None:
 
     @mcp.tool()
     def meta_health() -> dict:
-        return {"status": "ok", "version": __version__, "effective_defaults": get_effective_defaults()}
+        return {
+            "name": SERVER_NAME,
+            "version": __version__,
+            "status": "ok",
+            "effective_defaults": get_effective_defaults(),
+        }
+    @mcp.tool(name="meta_list_tools", description="List all registered tool names and their descriptions.")
+    def meta_list_tools() -> list:
+        # Return a list of dicts: {"name": ..., "description": ...}
+        tools = getattr(mcp, "_tools", {})
+        return [
+            {"name": name, "description": getattr(fn, "description", "")}
+            for name, fn in tools.items()
+        ]
 
     @mcp.tool()
     def config_get_effective_defaults() -> dict:
         return get_effective_defaults()
 
     if args.print_tools:
-        names = sorted(getattr(mcp, "_tools", {}).keys())
-        for n in names:
-            print(n)
+        # Print tool names and descriptions for convenience
+        tools = getattr(mcp, "_tools", {})
+        for name in sorted(tools.keys()):
+            desc = getattr(tools[name], "description", "")
+            print(f"{name}: {desc}")
         return
 
     mcp.run(transport=args.transport)
