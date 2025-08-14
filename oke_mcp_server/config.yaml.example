@@ -1,0 +1,19 @@
+# Logging / behavior
+log_level: INFO
+allow_write: false
+allow_sensitive: false
+
+# OKE context
+compartment_id: "ocid1.compartment.oc1...."
+cluster_id: "ocid1.cluster.oc1..."
+
+# OCI / kube auth
+oci_profile: "DEFAULT"
+oci_config_file: "/Users/<user>/.oci/config"
+oci_cli_auth: none # or "security_token"
+kube_endpoint: "PUBLIC" # or "PRIVATE"
+
+# Performance knobs
+rate_limit_per_min: 90
+cache_ttl_seconds: 20
+max_list_items: 200
