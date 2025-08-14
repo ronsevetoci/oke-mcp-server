@@ -178,30 +178,3 @@ oke_mcp_server/
 pyproject.toml
 Makefile
 ```
-
----
-
-## Release
-
-1. Bump version in `pyproject.toml`.
-2. Build & test:
-   ```bash
-   python -m pip install --upgrade build twine
-   python -m build
-   uvx --from dist/*.whl oke-mcp-server --transport stdio
-   ```
-3. Publish:
-   ```bash
-   export TWINE_USERNAME="__token__"
-   export TWINE_PASSWORD="pypi-***"
-   twine upload dist/*
-   ```
-4. Tag and push:
-   ```bash
-   git tag vX.Y.Z
-   git push origin vX.Y.Z
-   ```
-
----
-
-For issues or feature requests, please open an issue. PRs welcome!
