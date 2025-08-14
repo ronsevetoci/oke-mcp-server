@@ -2,6 +2,8 @@
 
 Model Context Protocol (MCP) server for **Oracle Container Engine for Kubernetes (OKE)**. It lets MCP‑aware chat clients (e.g. Claude Desktop, VS Code Agent, custom CLI) **inspect, query and troubleshoot** your OKE clusters through a small set of safe, composable tools.
 
+![Demo of OKE MCP Server](https://raw.githubusercontent.com/ronsevetoci/oke-mcp-server/main/assets/demo.gif)
+
 ---
 
 ## ✨ Highlights
